@@ -1,18 +1,13 @@
-"""Clean-room Pure-NumPy Tensor Autograd, Causal Transformer, and 1.58-Bit Ternary STE/QAT (`sdcs_bench.autograd_qat`).
+"""Clean-room Pure-NumPy Tensor Autograd & Causal Transformer Primitives (`circuitforge.autograd`).
 
 Implements:
 1. `Tensor`: Reverse-mode automatic differentiation in pure NumPy with topological DFS backward
    pass, fan-out gradient accumulation (`+=`), and general N-D shape unbroadcasting (`unbroadcast`).
-2. Core Differentiable Operations:
+2. Core Differentiable Circuit Operations:
    - Batched Matrix Multiplication (`A @ B`) with `np.swapaxes` transpose gradients
    - Numerically stable fused `softmax_cross_entropy`
    - `RMSNorm` (Root-Mean-Square Layer Normalization, matching Qwen3.5-MoE)
-   - Multi-Head Causal Self-Attention (`CausalSelfAttention`)
-3. `TritForge` 1.58-Bit Ternary Quantization & Straight-Through Estimator (`ternary_quantize_ste`):
-   - Closed-form least-squares optimal scale `alpha* = sum(|w_i| over |w_i| > tau) / count(|w_i| > tau)`
-   - Calibration-free Post-Training Quantization (PTQ) vs. Quantization-Aware Training (QAT)
-     via Straight-Through Estimator (`dw = d_wq` inside the clipping window), demonstrating
-     empirically why QAT recovers the accuracy drop observed in calibration-free 1.58-bit PTQ.
+   - Multi-Head Causal Self-Attention (`causal_self_attention`)
 """
 
 from __future__ import annotations
@@ -354,105 +349,3 @@ def causal_self_attention(
     attn_weights = softmax(masked_scores, axis=-1)
     context = (attn_weights @ v).transpose((0, 2, 1, 3)).reshape((bsz, seq_len, d_model))
     return context @ wo
-
-
-def ls_optimal_ternary_scale(w: np.ndarray, threshold_factor: float = 0.7) -> tuple[np.ndarray, float]:
-    """
-    TritForge closed-form Least-Squares Optimal 1.58-bit Base-3 Ternary Quantizer (`{-1, 0, +1}`).
-    For ternary assignments `t_i = round(clip(w_i / s_init, -1, 1))`, the exact L2-minimizing
-    scale factor is `alpha* = sum(|w_i| for t_i != 0) / sum(t_i^2)`.
-    """
-    abs_w = np.abs(w)
-    s_init = max(float(np.mean(abs_w)), 1e-12)
-    tau = threshold_factor * s_init
-    ternary = np.where(abs_w <= tau, 0.0, np.sign(w))
-    nnz = float(np.sum(np.square(ternary)))
-    if nnz > 0.0:
-        alpha = float(np.sum(w * ternary) / nnz)
-    else:
-        alpha = s_init
-    return ternary * alpha, alpha
-
-
-def ternary_quantize_ste(w: Tensor) -> Tensor:
-    """
-    Differentiable 1.58-bit Ternary Weight Quantizer using the Straight-Through Estimator (STE):
-    - Forward pass: exact `ls_optimal_ternary_scale` ternary weights `alpha * {-1, 0, +1}`.
-    - Backward pass (STE): passes upstream gradient `d_wq` straight through to `w` within
-      the active clipping window `|w| <= 2 * alpha`.
-    """
-    w_q_data, alpha = ls_optimal_ternary_scale(w.data)
-    out = Tensor(w_q_data, requires_grad=w.requires_grad, _children=(w,), _op="ternary_ste")
-
-    def _backward() -> None:
-        if w.requires_grad:
-            clip_mask = (np.abs(w.data) <= 2.0 * max(alpha, 1e-6)).astype(np.float64)
-            w.grad += out.grad * clip_mask
-
-    out._backward = _backward
-    return out
-
-
-def run_qat_vs_ptq_experiment(seed: int = 7, steps: int = 120) -> dict[str, float]:
-    """
-    Demonstrate empirically why 1.58-bit Quantization-Aware Training (QAT via STE) recovers
-    the accuracy/MSE loss caused by calibration-free 1.58-bit Post-Training Quantization (PTQ)
-    in a 2-layer SwiGLU/SiLU MoE expert MLP.
-    """
-    rng = np.random.default_rng(seed)
-    n_samples, d_in, d_hid, d_out = 64, 16, 32, 8
-
-    x_np = rng.standard_normal((n_samples, d_in))
-    teacher_w1 = rng.standard_normal((d_in, d_hid)) * 0.35
-    teacher_w2 = rng.standard_normal((d_hid, d_out)) * 0.35
-
-    # Ground-truth teacher targets (classification over 8 expert classes)
-    h_teach = x_np @ teacher_w1
-    h_act = h_teach * (1.0 / (1.0 + np.exp(-h_teach)))
-    logits_teach = h_act @ teacher_w2
-    targets = np.argmax(logits_teach, axis=-1)
-
-    # 1. Full-Precision Baseline Evaluation
-    acc_fp = float(np.mean(np.argmax(logits_teach, axis=-1) == targets))
-
-    # 2. Calibration-Free 1.58-Bit PTQ Evaluation (Zero-Shot Ternary Rounding)
-    w1_ptq, _ = ls_optimal_ternary_scale(teacher_w1)
-    w2_ptq, _ = ls_optimal_ternary_scale(teacher_w2)
-    h_ptq = x_np @ w1_ptq
-    h_ptq_act = h_ptq * (1.0 / (1.0 + np.exp(-h_ptq)))
-    logits_ptq = h_ptq_act @ w2_ptq
-    acc_ptq = float(np.mean(np.argmax(logits_ptq, axis=-1) == targets))
-    loss_ptq = float(softmax_cross_entropy(Tensor(logits_ptq), targets).data)
-
-    # 3. 1.58-Bit QAT with Straight-Through Estimator (STE)
-    w1 = Tensor(teacher_w1.copy(), requires_grad=True)
-    w2 = Tensor(teacher_w2.copy(), requires_grad=True)
-    x_t = Tensor(x_np, requires_grad=False)
-    lr = 0.08
-
-    for _ in range(steps):
-        w1.zero_grad()
-        w2.zero_grad()
-        w1_q = ternary_quantize_ste(w1)
-        w2_q = ternary_quantize_ste(w2)
-        logits_qat = (x_t @ w1_q).silu() @ w2_q
-        loss = softmax_cross_entropy(logits_qat, targets)
-        loss.backward()
-        w1.data -= lr * w1.grad
-        w2.data -= lr * w2.grad
-
-    # Final evaluation using strictly quantized 1.58-bit ternary weights
-    w1_final, _ = ls_optimal_ternary_scale(w1.data)
-    w2_final, _ = ls_optimal_ternary_scale(w2.data)
-    logits_final = Tensor(x_np) @ Tensor(w1_final)
-    logits_final = logits_final.silu() @ Tensor(w2_final)
-    loss_qat = float(softmax_cross_entropy(logits_final, targets).data)
-    acc_qat = float(np.mean(np.argmax(logits_final.data, axis=-1) == targets))
-
-    return {
-        "fp64_accuracy": round(acc_fp, 4),
-        "ptq_158bit_accuracy": round(acc_ptq, 4),
-        "qat_158bit_accuracy": round(acc_qat, 4),
-        "ptq_158bit_loss": round(loss_ptq, 4),
-        "qat_158bit_loss": round(loss_qat, 4),
-    }

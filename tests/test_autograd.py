@@ -1,4 +1,4 @@
-"""Finite-difference gradient checks and QAT vs. PTQ verification for `circuitforge.autograd_qat`."""
+"""Finite-difference gradient checks for `circuitforge.autograd`."""
 
 from __future__ import annotations
 
@@ -6,11 +6,10 @@ from typing import Callable
 
 import numpy as np
 
-from circuitforge.autograd_qat import (
+from circuitforge.autograd import (
     Tensor,
     causal_self_attention,
     rms_norm,
-    run_qat_vs_ptq_experiment,
     softmax_cross_entropy,
 )
 
@@ -40,7 +39,6 @@ def test_matmul_broadcast_and_fanout_gradients() -> None:
     bias = Tensor(rng.standard_normal((1, 5)), requires_grad=True)
 
     def forward() -> Tensor:
-        # Includes fan-out (`a` used twice) and shape broadcasting (`(2, 4, 5) + (1, 5)`)
         a_combo = a + (a * 0.5)
         y = (a_combo @ b) + bias
         return y.silu().mean()
@@ -94,11 +92,3 @@ def test_causal_self_attention_gradients() -> None:
     for param in (x, wq, wk, wv, wo):
         g_num = numerical_grad(forward, param)
         np.testing.assert_allclose(param.grad, g_num, rtol=1e-5, atol=1e-6)
-
-
-def test_tritforge_qat_recovers_158bit_ptq_drop() -> None:
-    """Verify 1.58-bit STE Quantization-Aware Training recovers accuracy lost by zero-shot ternary PTQ."""
-    metrics = run_qat_vs_ptq_experiment(seed=7, steps=120)
-    assert metrics["qat_158bit_loss"] < metrics["ptq_158bit_loss"]
-    assert metrics["qat_158bit_accuracy"] > metrics["ptq_158bit_accuracy"]
-    assert metrics["qat_158bit_accuracy"] >= 0.85

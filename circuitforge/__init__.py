@@ -1,15 +1,13 @@
 """
-CircuitForge: Weight-Space Circuit Surgery, Verifiable RL, and 1.58-Bit QAT for Hybrid MoE Transformers.
+CircuitForge: Weight-Space Circuit Surgery and Verifiable RL (`RLVR`) for Hybrid MoE Transformers.
 """
 
-from circuitforge.autograd_qat import (
+from circuitforge.autograd import (
     Tensor,
     causal_self_attention,
-    ls_optimal_ternary_scale,
     rms_norm,
-    run_qat_vs_ptq_experiment,
+    softmax,
     softmax_cross_entropy,
-    ternary_quantize_ste,
 )
 from circuitforge.surgery import (
     SurgicalEditReport,
@@ -43,9 +41,7 @@ __all__ = [
     "is_routed_expert_tensor",
     "is_surgical_control_tensor",
     "load_wiring_map",
-    "ls_optimal_ternary_scale",
     "rms_norm",
-    "run_qat_vs_ptq_experiment",
+    "softmax",
     "softmax_cross_entropy",
-    "ternary_quantize_ste",
 ]

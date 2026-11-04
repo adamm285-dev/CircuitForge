@@ -1,6 +1,6 @@
 # CircuitForge
 
-**Weight-Space Circuit Surgery, Verifiable RL (`RLVR`), and 1.58-Bit Ternary QAT for Hybrid MoE Coding Agents**
+**Weight-Space Circuit Surgery & Verifiable RL (`RLVR`) for Hybrid MoE Coding Agents**
 
 **Author:** Adam Murphy ([adamm285-dev](https://github.com/adamm285-dev))
 
@@ -23,8 +23,8 @@ Standard reinforcement learning (`PPO` / `GRPO`) and naive fine-tuning treat Mix
    - Guarantees $\Delta W \cdot K_0 = 0$ on preserved baseline syntax keys $K_0$, preventing catastrophic forgetting.
 3. **Verifiable Multi-Turn Agent RL Environment (`circuitforge/rl_env.py`):**
    - Gymnasium / `verifiers`-compatible RLVR environment (`VerifiableCodingEnv`) with deterministic step-level process rewards and invariant safety gates for `GRPO` post-training.
-4. **Clean-Room NumPy Reverse-Mode Autograd & 1.58-Bit Ternary STE/QAT (`circuitforge/autograd_qat.py`):**
-   - Pure-NumPy automatic differentiation engine (`MatMul`, `RMSNorm`, fused `Softmax+CrossEntropy`, Multi-Head Causal Self-Attention) and `ls_optimal_ternary_scale` / `ternary_quantize_ste` Straight-Through Estimator (STE) Quantization-Aware Training (`{-1, 0, +1}`).
+4. **Clean-Room NumPy Reverse-Mode Autograd (`circuitforge/autograd.py`):**
+   - Pure-NumPy automatic differentiation engine (`MatMul`, `RMSNorm`, fused `Softmax+CrossEntropy`, and Multi-Head Causal Self-Attention) for surgical projection verification and gradient checks.
 
 ---
 
@@ -50,10 +50,10 @@ python -m circuitforge inspect-wiring --profile Qwen3.6-35B-A3B
 # 2. Generate the surgical target manifest for mid-to-late Full-Attention anchors & Shared Experts
 python -m circuitforge plan-surgery --profile Qwen3.6-35B-A3B
 
-# 3. Run the mathematical verification of Null-Space Rank-1 Surgery + 1.58-Bit Ternary STE
+# 3. Run the mathematical verification of Null-Space Rank-1 Weight Surgery + Autograd
 python -m circuitforge verify-surgery
 
-# 4. Run the full pytest suite (wiring maps, null-space surgery, RLVR environment, and 1.58-bit QAT)
+# 4. Run the full pytest suite (wiring maps, null-space surgery, RLVR environment, and autograd)
 pytest -v
 ```
 

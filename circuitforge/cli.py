@@ -4,19 +4,18 @@ Command-line interface for CircuitForge (`python -m circuitforge` / `circuitforg
 Commands:
 - `inspect-wiring`: Inspect the hybrid Linear/Full-Attention MoE circuit map and shard layout.
 - `plan-surgery`: Generate a deterministic surgical target manifest for Full-Attention anchors and Shared Experts.
-- `verify-surgery`: Run a self-contained mathematical verification of null-space rank-1 surgery and 1.58-bit STE QAT.
+- `verify-surgery`: Run a self-contained mathematical verification of null-space rank-1 weight surgery and autograd gradients.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
-from circuitforge.autograd_qat import Tensor, ls_optimal_ternary_scale, ternary_quantize_ste
+from circuitforge.autograd import Tensor, causal_self_attention, rms_norm
 from circuitforge.surgery import (
     apply_nullspace_rank1_surgery,
     build_surgical_plan,
@@ -102,10 +101,16 @@ def cmd_verify_surgery(seed: int = 42) -> int:
         layer_idx=15,
     )
 
-    # 3. Verify 1.58-bit Ternary STE quantization scale on the edited matrix
-    _, scale = ls_optimal_ternary_scale(W_edited.astype(np.float64))
-    W_q_ten = ternary_quantize_ste(Tensor(W_edited.astype(np.float64), requires_grad=True))
-    unique_trits = sorted(set(np.unique(np.round(W_q_ten.data / scale)).astype(int).tolist()))
+    # 3. Verify causal self-attention & RMSNorm backward pass on edited projection
+    x_t = Tensor(rng.standard_normal((2, 4, 16)), requires_grad=True)
+    gamma = Tensor(np.ones(16), requires_grad=True)
+    wq = Tensor(rng.standard_normal((16, 16)) * 0.1, requires_grad=True)
+    wk = Tensor(rng.standard_normal((16, 16)) * 0.1, requires_grad=True)
+    wv = Tensor(rng.standard_normal((16, 16)) * 0.1, requires_grad=True)
+    wo = Tensor(W_edited[:16, :16].astype(np.float64), requires_grad=True)
+    attn_out = causal_self_attention(rms_norm(x_t, gamma), wq, wk, wv, wo, num_heads=2)
+    attn_out.mean().backward()
+    grad_norm_wo = float(np.linalg.norm(wo.grad))
 
     result = {
         "tensor_name": report.tensor_name,
@@ -116,12 +121,11 @@ def cmd_verify_surgery(seed: int = 42) -> int:
         "target_alignment_after": round(report.target_alignment_after, 6),
         "alignment_gain": round(report.target_alignment_after - report.target_alignment_before, 6),
         "nullspace_leakage_max": float(f"{report.nullspace_leakage_max:.3e}"),
-        "ternary_ls_scale": round(float(scale), 6),
-        "ternary_levels": unique_trits,
+        "autograd_o_proj_grad_norm": round(grad_norm_wo, 6),
         "verified": (
             report.nullspace_leakage_max < 1e-10
-            and (report.target_alignment_after - report.target_alignment_before) > 2.4
-            and unique_trits == [-1, 0, 1]
+            and abs((report.target_alignment_after - report.target_alignment_before) - 2.5) < 1e-4
+            and grad_norm_wo > 0.0
         ),
     }
     print(json.dumps(result, indent=2))
@@ -131,7 +135,7 @@ def cmd_verify_surgery(seed: int = 42) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="circuitforge",
-        description="CircuitForge: Weight-Space Circuit Surgery, Verifiable RL, and 1.58-Bit QAT for Hybrid MoE Transformers",
+        description="CircuitForge: Weight-Space Circuit Surgery and Verifiable RL for Hybrid MoE Transformers",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -157,7 +161,7 @@ def main() -> int:
     plan_p.add_argument("--all-anchors", action="store_true", help="Target all Full-Attention layers instead of 25%..85% depth")
     plan_p.add_argument("--out", default=None, help="Optional JSON output path")
 
-    ver_p = sub.add_parser("verify-surgery", help="Run mathematical verification of null-space rank-1 surgery and 1.58-bit STE")
+    ver_p = sub.add_parser("verify-surgery", help="Run mathematical verification of null-space rank-1 weight surgery")
     ver_p.add_argument("--seed", type=int, default=42, help="Random seed")
 
     args = parser.parse_args()
