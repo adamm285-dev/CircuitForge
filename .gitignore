@@ -1,0 +1,37 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Model weights, checkpoints, and steering vectors
+models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.trit
+*.kld
+
+# Local private workspace & internal experiments
+private_*/
+experiments/
+*sdcs*
+*SDCS*
+*cfv3*
+*CFV3*
+*cacheforge*
+*CacheForge*
+state.md
+app_map.md
+evals.md
+roadmap.md
+WEIGHT_SURGERY_SPEC.md
+.env
+*.local.*
