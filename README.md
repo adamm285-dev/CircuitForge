@@ -41,10 +41,19 @@ Standard reinforcement learning (`PPO` / `GRPO`) and naive fine-tuning treat Mix
 
 ---
 
-## Quickstart & Verification
+## Quickstart & CLI Verification
 
 ```bash
-# Run the full test suite (wiring maps, null-space surgery, RLVR environment, and 1.58-bit QAT)
+# 1. Inspect the 40-layer hybrid Gated-DeltaNet / Full-Attention MoE circuit map
+python -m circuitforge inspect-wiring --profile Qwen3.6-35B-A3B
+
+# 2. Generate the surgical target manifest for mid-to-late Full-Attention anchors & Shared Experts
+python -m circuitforge plan-surgery --profile Qwen3.6-35B-A3B
+
+# 3. Run the mathematical verification of Null-Space Rank-1 Surgery + 1.58-Bit Ternary STE
+python -m circuitforge verify-surgery
+
+# 4. Run the full pytest suite (wiring maps, null-space surgery, RLVR environment, and 1.58-bit QAT)
 pytest -v
 ```
 
