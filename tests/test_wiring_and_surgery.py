@@ -104,3 +104,12 @@ def test_surgical_plan_generation() -> None:
         assert (l_idx + 1) % 4 == 0  # Every 4th layer is a Full-Attention anchor
         assert entry["attention_type"] == "full_attention"
         assert entry["frozen_routed_experts"] == 256
+
+
+def test_cli_verify_surgery_and_inspect_wiring() -> None:
+    """Verify CLI entrypoints `inspect-wiring`, `plan-surgery`, and `verify-surgery`."""
+    from circuitforge.cli import cmd_inspect_wiring, cmd_plan_surgery, cmd_verify_surgery
+
+    assert cmd_inspect_wiring(None, "Qwen3.6-35B-A3B", "json") == 0
+    assert cmd_plan_surgery(None, "Qwen3.6-35B-A3B", True, False, None) == 0
+    assert cmd_verify_surgery(seed=42) == 0
