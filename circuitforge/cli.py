@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from circuitforge.autograd_qat import Tensor, ternary_quantize_ste
+from circuitforge.autograd_qat import Tensor, ls_optimal_ternary_scale, ternary_quantize_ste
 from circuitforge.surgery import (
     apply_nullspace_rank1_surgery,
     build_surgical_plan,
@@ -103,7 +103,8 @@ def cmd_verify_surgery(seed: int = 42) -> int:
     )
 
     # 3. Verify 1.58-bit Ternary STE quantization scale on the edited matrix
-    W_q_ten, scale, _ = ternary_quantize_ste(Tensor(W_edited.astype(np.float64), requires_grad=True))
+    _, scale = ls_optimal_ternary_scale(W_edited.astype(np.float64))
+    W_q_ten = ternary_quantize_ste(Tensor(W_edited.astype(np.float64), requires_grad=True))
     unique_trits = sorted(set(np.unique(np.round(W_q_ten.data / scale)).astype(int).tolist()))
 
     result = {
