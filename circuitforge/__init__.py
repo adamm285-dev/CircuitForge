@@ -2,6 +2,11 @@
 CircuitForge: Weight-Space Circuit Surgery and Verifiable RL (`RLVR`) for Hybrid MoE Transformers.
 """
 
+from circuitforge.attribution import (
+    LayerAttributionScore,
+    discover_optimal_surgical_circuit,
+    sweep_causal_circuit_attribution,
+)
 from circuitforge.autograd import (
     Tensor,
     causal_self_attention,
@@ -24,14 +29,23 @@ from circuitforge.engram import (
     slerp_adapters,
 )
 from circuitforge.exporter import (
+    build_reference_checkpoint,
     export_forged_bundle,
+    export_gguf_control_vector,
     export_model_card,
+    export_surgical_lora,
     render_model_card_markdown,
 )
 from circuitforge.gguf import (
     GGUFTensorInfo,
+    dequantize_q4_0_bytes,
+    dequantize_q8_0_bytes,
+    ggml_tensor_byte_size,
     inspect_gguf_header,
     load_gguf_tensor_f32,
+    quantize_q4_0_bytes,
+    quantize_q8_0_bytes,
+    stream_surgical_gguf_update,
     write_gguf_file,
 )
 from circuitforge.hud import (
@@ -44,6 +58,7 @@ from circuitforge.hud import (
 )
 from circuitforge.io import (
     SafetensorEntry,
+    apply_sharded_checkpoint_surgery,
     inspect_safetensors_header,
     load_safetensor_slice,
     load_safetensors_file,
@@ -66,7 +81,9 @@ from circuitforge.recipes import (
     ContrastivePair,
     ForgeRecipe,
     SurgeryStepSpec,
+    compute_weight_backed_activations,
     execute_forge_recipe,
+    extract_principal_circuit_directions,
     load_contrastive_pairs,
     load_forge_recipe,
 )
@@ -79,6 +96,7 @@ from circuitforge.sentinel import (
 from circuitforge.surgery import (
     SurgicalEditReport,
     apply_directional_ablation,
+    apply_leace_concept_erasure,
     apply_nullspace_rank1_surgery,
     apply_nullspace_rank_k_surgery,
     build_surgical_plan,
@@ -107,6 +125,7 @@ __all__ = [
     "EngramNode",
     "ForgeRecipe",
     "GGUFTensorInfo",
+    "LayerAttributionScore",
     "LayerCircuitSpec",
     "MechanisticHUDServer",
     "MechanisticTelemetryHUD",
@@ -124,9 +143,12 @@ __all__ = [
     "TelemetryEvent",
     "Tensor",
     "apply_directional_ablation",
+    "apply_leace_concept_erasure",
     "apply_nullspace_rank1_surgery",
     "apply_nullspace_rank_k_surgery",
+    "apply_sharded_checkpoint_surgery",
     "benchmark_native_vs_numpy",
+    "build_reference_checkpoint",
     "build_surgical_plan",
     "causal_self_attention",
     "classify_activation_color",
@@ -135,15 +157,23 @@ __all__ = [
     "compute_cross_layer_alignment",
     "compute_nullspace_projector",
     "compute_router_entropy",
+    "compute_weight_backed_activations",
     "default_harness_rules",
+    "dequantize_q4_0_bytes",
+    "dequantize_q8_0_bytes",
+    "discover_optimal_surgical_circuit",
     "distribute_multilayer_surgery",
     "evaluate_compiler_benchmark",
     "evaluate_engram_and_manifold_benchmark",
     "evaluate_sentinel_benchmark",
     "execute_forge_recipe",
     "export_forged_bundle",
+    "export_gguf_control_vector",
     "export_hud_snapshot",
     "export_model_card",
+    "export_surgical_lora",
+    "extract_principal_circuit_directions",
+    "ggml_tensor_byte_size",
     "has_native_engine",
     "inspect_gguf_header",
     "inspect_safetensors_header",
@@ -160,6 +190,8 @@ __all__ = [
     "native_nullspace_rank1_surgery_f32",
     "native_rmsnorm_matvec_f32",
     "native_router_entropy_f32",
+    "quantize_q4_0_bytes",
+    "quantize_q8_0_bytes",
     "register_profile",
     "render_hud_html",
     "render_model_card_markdown",
@@ -168,6 +200,8 @@ __all__ = [
     "slerp_adapters",
     "softmax",
     "softmax_cross_entropy",
+    "stream_surgical_gguf_update",
     "stream_surgical_safetensors_update",
+    "sweep_causal_circuit_attribution",
     "write_gguf_file",
 ]

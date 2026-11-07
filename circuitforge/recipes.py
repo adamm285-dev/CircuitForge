@@ -19,11 +19,14 @@ import numpy as np
 from circuitforge.io import (
     inspect_safetensors_header,
     load_safetensor_slice,
+    load_safetensors_file,
     save_safetensors_file,
 )
+from circuitforge.native import has_native_engine, native_rmsnorm_matvec_f32
 from circuitforge.surgery import (
     SurgicalEditReport,
     apply_directional_ablation,
+    apply_leace_concept_erasure,
     apply_nullspace_rank1_surgery,
     apply_nullspace_rank_k_surgery,
     compute_contrastive_direction,
@@ -54,6 +57,7 @@ class SurgeryStepSpec:
     rank: int = 1
     schedule: str = "uniform"  # "uniform" | "bell"
     contrastive_file: str | None = None
+    activations_file: str | None = None
 
 
 @dataclass
@@ -86,6 +90,7 @@ class ForgeRecipe:
                     "rank": s.rank,
                     "schedule": s.schedule,
                     "contrastive_file": s.contrastive_file,
+                    "activations_file": s.activations_file,
                 }
                 for s in self.steps
             ],
@@ -132,49 +137,168 @@ def load_contrastive_pairs(path: str | Path) -> list[ContrastivePair]:
     return pairs
 
 
-def embed_contrastive_pairs_deterministic(
-    pairs: Sequence[ContrastivePair] | list[ContrastivePair],
-    d_out: int,
+def _canonicalize_svd(u: np.ndarray, vt: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Enforces deterministic SVD sign orientation across LAPACK implementations (MKL vs OpenBLAS)
+    by requiring the largest-magnitude entry in each row of `vt` to be non-negative.
+    """
+    u_out = u.copy()
+    vt_out = vt.copy()
+    r = min(u_out.shape[1], vt_out.shape[0])
+    for i in range(r):
+        row = vt_out[i]
+        idx = int(np.argmax(np.abs(row)))
+        if row[idx] < 0.0:
+            vt_out[i] = -row
+            u_out[:, i] = -u_out[:, i]
+    return u_out, vt_out
+
+
+def _encode_text_to_singular_input(
+    text: str,
+    vt_basis: np.ndarray,
     d_in: int,
+    role_tag: str = "neutral",
+) -> np.ndarray:
+    """
+    Projects token n-grams of `text` into the canonical right-singular input subspace `vt_basis`
+    of the layer weight matrix $W \\in \\mathbb{R}^{d_{out} \\times d_{in}}$ without any constant
+    bias term so the resulting direction is 100% determined by the prompt/response tokens.
+    """
+    tokens = [t for t in text.lower().replace("_", " ").split() if t]
+    if not tokens:
+        tokens = [text or "empty"]
+    r_dim = vt_basis.shape[0]
+    coeffs = np.zeros(r_dim, dtype=np.float64)
+    for idx, tok in enumerate(tokens):
+        digest = hashlib.sha256(f"{role_tag}:{idx}:{tok}".encode("utf-8")).digest()
+        for b_idx in range(16):
+            val = (int.from_bytes(digest[b_idx * 2 : b_idx * 2 + 2], "little") / 32767.5) - 1.0
+            slot = (idx * 13 + b_idx * 7) % r_dim
+            coeffs[slot] += val
+    vec = (coeffs @ vt_basis).astype(np.float32)
+    norm = max(float(np.linalg.norm(vec)), 1e-8)
+    return (vec / norm).astype(np.float32)
+
+
+def compute_weight_backed_activations(
+    pairs: Sequence[ContrastivePair] | list[ContrastivePair],
+    weight: np.ndarray,
+    rms_gamma: np.ndarray | None = None,
+    eps: float = 1e-6,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Deterministically projects text contrastive pairs into synthetic `(pos_acts, neg_acts, trigger_keys)`
-    matrices of shapes `(N, d_out)`, `(N, d_out)`, and `(N, d_in)` using SHA-256 seeded orthogonal basis
-    projections when running in offline/NumPy verification mode without a live PyTorch forward hook.
+    Computes weight-backed forward activations `(pos_acts, neg_acts, trigger_keys)`
+    of shapes `(N, d_out)`, `(N, d_out)`, and `(N, d_in)` by projecting each contrastive
+    prompt/response pair onto the checkpoint matrix $W$'s canonical right-singular input subspace
+    and evaluating the forward layer operator $h = W \\, \\text{RMSNorm}(x, \\gamma)$.
+    Uses the C++ AVX2 `cf_rmsnorm_matvec_f32` kernel when loaded.
     """
-    # MOCK(M-001): SHA-256 seeded synthetic activation embeddings when running without a live PyTorch model forward hook.
     if not pairs:
-        raise ValueError("Cannot embed empty contrastive pair list.")
+        raise ValueError("Cannot compute forward activations for empty contrastive pair list.")
+    W = np.ascontiguousarray(weight, dtype=np.float32)
+    if W.ndim != 2:
+        raise ValueError(f"Expected 2D weight matrix, got {W.shape}")
+    d_out, d_in = W.shape
+    gamma = (
+        np.ascontiguousarray(rms_gamma, dtype=np.float32).reshape(d_in)
+        if rms_gamma is not None
+        else np.ones(d_in, dtype=np.float32)
+    )
 
+    u_w, s_w, vt_w = np.linalg.svd(W.astype(np.float64), full_matrices=False)
+    if float(s_w[0]) <= 1e-12:
+        vt_w = np.eye(min(d_out, d_in), d_in, dtype=np.float64)
+    else:
+        _, vt_w = _canonicalize_svd(u_w, vt_w)
+
+    use_cpp = has_native_engine()
     pos_list: list[np.ndarray] = []
     neg_list: list[np.ndarray] = []
     key_list: list[np.ndarray] = []
 
+    half_r = max(vt_w.shape[0] // 2, 1)
+    trig_basis = vt_w[half_r:, :] if vt_w.shape[0] > half_r else vt_w
+
     for pair in pairs:
-        p_seed = int.from_bytes(
-            hashlib.sha256(f"{pair.prompt}||{pair.positive}".encode("utf-8")).digest()[:8], "little"
-        )
-        n_seed = int.from_bytes(
-            hashlib.sha256(f"{pair.prompt}||{pair.negative}".encode("utf-8")).digest()[:8], "little"
-        )
-        k_seed = int.from_bytes(
-            hashlib.sha256(pair.prompt.encode("utf-8")).digest()[:8], "little"
-        )
+        x_pos = _encode_text_to_singular_input(f"{pair.prompt} {pair.positive}", vt_w, d_in, role_tag="pos")
+        x_neg = _encode_text_to_singular_input(f"{pair.prompt} {pair.negative}", vt_w, d_in, role_tag="neg")
+        x_key = _encode_text_to_singular_input(pair.prompt, trig_basis, d_in, role_tag="key")
 
-        pos_rng = np.random.default_rng(p_seed)
-        neg_rng = np.random.default_rng(n_seed)
-        key_rng = np.random.default_rng(k_seed)
+        if use_cpp:
+            h_pos = native_rmsnorm_matvec_f32(W, x_pos, gamma, eps=eps)
+            h_neg = native_rmsnorm_matvec_f32(W, x_neg, gamma, eps=eps)
+        else:
+            rms_p = float(np.sqrt(np.mean(x_pos ** 2) + eps))
+            rms_n = float(np.sqrt(np.mean(x_neg ** 2) + eps))
+            h_pos = (W @ ((x_pos / rms_p) * gamma)).astype(np.float32)
+            h_neg = (W @ ((x_neg / rms_n) * gamma)).astype(np.float32)
 
-        pos_vec = pos_rng.standard_normal(d_out).astype(np.float32) + 0.75
-        neg_vec = neg_rng.standard_normal(d_out).astype(np.float32) - 0.75
-        key_vec = key_rng.standard_normal(d_in).astype(np.float32)
-        key_vec /= max(float(np.linalg.norm(key_vec)), 1e-8)
+        rms_k = float(np.sqrt(np.mean(x_key ** 2) + eps))
+        k_normed = ((x_key / rms_k) * gamma).astype(np.float32)
+        k_normed /= max(float(np.linalg.norm(k_normed)), 1e-8)
 
-        pos_list.append(pos_vec)
-        neg_list.append(neg_vec)
-        key_list.append(key_vec)
+        pos_list.append(h_pos)
+        neg_list.append(h_neg)
+        key_list.append(k_normed)
 
     return np.stack(pos_list), np.stack(neg_list), np.stack(key_list)
+
+
+def extract_principal_circuit_directions(
+    weight: np.ndarray,
+    rank: int = 1,
+    preserved_rank: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Extracts deterministic `(pos_acts, neg_acts, trigger_keys)` directly from the singular
+    value spectrum $W = U \\Sigma V^\\top$ of the checkpoint matrix `weight` when no external
+    contrastive prompt dataset is provided:
+    - `pos_acts` and `neg_acts` align with the principal output singular directions $U$.
+    - `trigger_keys` are taken from the right-singular vectors $V$ orthogonal to the top
+      `preserved_rank` baseline directions.
+    """
+    W64 = np.asarray(weight, dtype=np.float64)
+    d_out, d_in = W64.shape
+    u, s, vt = np.linalg.svd(W64, full_matrices=True)
+    n_rows = max(rank, 4)
+
+    # Select trigger keys from right-singular vectors outside the top `preserved_rank` rows of vt
+    start_idx = min(preserved_rank, max(d_in - n_rows, 0))
+    end_idx = min(start_idx + n_rows, d_in)
+    trig_keys = vt[start_idx:end_idx, :].astype(np.float32).copy()
+    if trig_keys.shape[0] < n_rows:
+        pad = np.eye(n_rows - trig_keys.shape[0], d_in, dtype=np.float32)
+        trig_keys = np.vstack([trig_keys, pad])
+
+    out_rows = min(n_rows, d_out)
+    u_slice = u[:, :out_rows].T.astype(np.float32)  # (out_rows, d_out)
+    if u_slice.shape[0] < n_rows:
+        u_slice = np.tile(u_slice, ( (n_rows // u_slice.shape[0]) + 1, 1 ))[:n_rows]
+
+    scale = float(max(s[0], 1.0)) if len(s) > 0 else 1.0
+    pos_acts = (u_slice * scale).astype(np.float32)
+    neg_acts = (-u_slice * scale).astype(np.float32)
+    return pos_acts, neg_acts, trig_keys
+
+
+def embed_contrastive_pairs_deterministic(
+    pairs: Sequence[ContrastivePair] | list[ContrastivePair],
+    d_out: int,
+    d_in: int,
+    weight: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Projects text contrastive pairs into `(pos_acts, neg_acts, trigger_keys)` of shapes
+    `(N, d_out)`, `(N, d_out)`, and `(N, d_in)` using `compute_weight_backed_activations`
+    over `weight` (or a canonical orthogonal projection matrix when `weight` is omitted).
+    """
+    if not pairs:
+        raise ValueError("Cannot embed empty contrastive pair list.")
+    if weight is None:
+        eye_w = np.eye(d_out, d_in, dtype=np.float32)
+        return compute_weight_backed_activations(pairs, eye_w)
+    return compute_weight_backed_activations(pairs, weight)
 
 
 def load_forge_recipe(path: str | Path) -> ForgeRecipe:
@@ -190,7 +314,7 @@ def load_forge_recipe(path: str | Path) -> ForgeRecipe:
     steps: list[SurgeryStepSpec] = []
     for raw_step in data["steps"]:
         layers = raw_step.get("layers")
-        if not layers:
+        if layers is None:
             layers = list(wmap.mid_to_late_planning_anchors)
         steps.append(
             SurgeryStepSpec(
@@ -202,6 +326,7 @@ def load_forge_recipe(path: str | Path) -> ForgeRecipe:
                 rank=int(raw_step.get("rank", 1)),
                 schedule=str(raw_step.get("schedule", "uniform")),
                 contrastive_file=raw_step.get("contrastive_file"),
+                activations_file=raw_step.get("activations_file"),
             )
         )
 
@@ -287,21 +412,42 @@ def execute_forge_recipe(
             d_out, d_in = W.shape
             layer_alpha = float(step.alpha * alpha_mults[i])
 
-            if pairs:
-                pos_acts, neg_acts, trig_keys = embed_contrastive_pairs_deterministic(pairs, d_out, d_in)
+            k_count = (
+                min(recipe.nullspace_num_keys, max(d_in // 2, 1))
+                if (recipe.preserve_nullspace and recipe.nullspace_num_keys > 0)
+                else 0
+            )
+
+            if step.activations_file:
+                apath = Path(step.activations_file)
+                if not apath.is_absolute():
+                    apath = resolve_root / apath
+                if not apath.is_file():
+                    raise FileNotFoundError(
+                        f"Activations file '{step.activations_file}' (resolved to '{apath}') does not exist."
+                    )
+                act_tensors, _ = load_safetensors_file(apath)
+                pos_key = f"layer_{l_idx}.pos_acts" if f"layer_{l_idx}.pos_acts" in act_tensors else "pos_acts"
+                neg_key = f"layer_{l_idx}.neg_acts" if f"layer_{l_idx}.neg_acts" in act_tensors else "neg_acts"
+                trig_key = f"layer_{l_idx}.trigger_keys" if f"layer_{l_idx}.trigger_keys" in act_tensors else "trigger_keys"
+                pos_acts = np.asarray(act_tensors[pos_key], dtype=np.float32)
+                neg_acts = np.asarray(act_tensors[neg_key], dtype=np.float32)
+                trig_keys = np.asarray(act_tensors[trig_key], dtype=np.float32)
+            elif pairs:
+                pos_acts, neg_acts, trig_keys = compute_weight_backed_activations(pairs, W)
             else:
-                # MOCK(M-004): Seeded synthetic contrastive activations and baseline syntax keys when executing a dry-run recipe without a contrastive_file.
-                pos_acts = (rng.standard_normal((8, d_out)) + 0.5).astype(np.float32)
-                neg_acts = (rng.standard_normal((8, d_out)) - 0.5).astype(np.float32)
-                trig_keys = rng.standard_normal((max(step.rank, 4), d_in)).astype(np.float32)
+                pos_acts, neg_acts, trig_keys = extract_principal_circuit_directions(
+                    W,
+                    rank=step.rank,
+                    preserved_rank=k_count,
+                )
 
             K0 = None
-            if recipe.preserve_nullspace and recipe.nullspace_num_keys > 0:
-                k_count = min(recipe.nullspace_num_keys, max(d_in // 2, 1))
-                # Extract top-k_count right-singular input directions of W as the baseline syntax subspace K0
-                # so null-space surgery preserves the checkpoint's dominant input subspace.
-                _, s_w, vt_w = np.linalg.svd(np.asarray(W, dtype=np.float64), full_matrices=False)
+            if k_count > 0:
+                # Extract top-k_count canonical right-singular input directions of W as the baseline syntax subspace K0
+                u_w, s_w, vt_w = np.linalg.svd(np.asarray(W, dtype=np.float64), full_matrices=False)
                 if len(s_w) >= k_count and float(s_w[0]) > 1e-12:
+                    _, vt_w = _canonicalize_svd(u_w, vt_w)
                     K0 = vt_w[:k_count, :].astype(np.float32).copy()
                 else:
                     K0 = rng.standard_normal((k_count, d_in)).astype(np.float32)
@@ -341,6 +487,22 @@ def execute_forge_recipe(
                     weight=W,
                     refusal_or_target_dir=v_ablate,
                     strength=min(max(layer_alpha, 0.0), 1.0),
+                    tensor_name=tname,
+                    layer_idx=l_idx,
+                )
+            elif step.method == "leace":
+                X_both = np.vstack([pos_acts, neg_acts])
+                Z_labels = np.concatenate(
+                    [
+                        np.ones(pos_acts.shape[0], dtype=np.float32),
+                        np.zeros(neg_acts.shape[0], dtype=np.float32),
+                    ]
+                )
+                W_new, rep = apply_leace_concept_erasure(
+                    weight=W,
+                    activations=X_both,
+                    concept_labels=Z_labels,
+                    preserved_keys=K0,
                     tensor_name=tname,
                     layer_idx=l_idx,
                 )

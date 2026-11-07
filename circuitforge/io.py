@@ -14,6 +14,8 @@ Supported dtypes:
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -273,8 +275,19 @@ def stream_surgical_safetensors_update(
                 raise ValueError(
                     f"Surgical edit changed shape of '{name}' from {arr.shape} to {edited.shape}"
                 )
+            if not np.all(np.isfinite(edited)):
+                raise ValueError(
+                    f"Surgical edit on tensor '{name}' produced NaN or Inf values."
+                )
             if entry.dtype == "BF16":
                 raw_bytes = _f32_to_bf16_bytes(edited)
+            elif entry.dtype == "F16":
+                f16_arr = edited.astype(np.float16)
+                if not np.all(np.isfinite(f16_arr)):
+                    raise ValueError(
+                        f"Surgical edit on tensor '{name}' overflowed float16 range."
+                    )
+                raw_bytes = f16_arr.tobytes()
             elif entry.dtype in _DTYPE_TO_NUMPY:
                 raw_bytes = edited.astype(_DTYPE_TO_NUMPY[entry.dtype], copy=False).tobytes()
             else:
@@ -322,3 +335,127 @@ def stream_surgical_safetensors_update(
     if tmp_path != out_path:
         tmp_path.replace(out_path)
     return updated_names
+
+
+def apply_sharded_checkpoint_surgery(
+    index_or_dir: str | Path,
+    output_dir: str | Path,
+    surgical_edits: dict[str, Callable[[np.ndarray], np.ndarray]],
+    link_untouched_shards: bool = False,
+) -> dict[str, Any]:
+    """
+    Executes surgical weight updates across a multi-shard `.safetensors` checkpoint
+    governed by `model.safetensors.index.json`:
+    1. Strictly rejects any edit targeting a banked routed MoE expert (`PermissionError`).
+    2. Validates all `weight_map` shard filenames against path traversal (`..`, absolute paths,
+       or symlinks escaping `src_dir` / `out_dir`).
+    3. Routes each `surgical_edits[tensor_name]` to its owning shard via `weight_map`.
+    4. Streams surgical updates ONLY on the control shards containing targeted tensors.
+    5. Byte-copies (or hard-links when `link_untouched_shards=True`) untouched routed-expert
+       shards and writes an updated `model.safetensors.index.json`.
+    """
+    for tname in surgical_edits:
+        if is_routed_expert_tensor(tname):
+            raise PermissionError(
+                f"CircuitForge Safety Gate: Cannot register surgical edit on routed expert tensor '{tname}'."
+            )
+
+    src = Path(index_or_dir).resolve()
+    idx_file = src / "model.safetensors.index.json" if src.is_dir() else src
+    if not idx_file.is_file():
+        raise FileNotFoundError(f"Safetensors index file not found: {idx_file}")
+    src_dir = idx_file.parent.resolve()
+
+    out_dir = Path(output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    index_data: dict[str, Any] = json.loads(idx_file.read_text(encoding="utf-8"))
+    weight_map: dict[str, str] = dict(index_data.get("weight_map", {}))
+
+    missing = [tname for tname in surgical_edits if tname not in weight_map]
+    if missing:
+        raise KeyError(
+            f"Target tensor(s) {missing} not found in weight_map of {idx_file}"
+        )
+
+    # Validate all shard filenames in weight_map to prevent path traversal out of src_dir / out_dir
+    all_shards = sorted(set(weight_map.values()))
+    for shard_name in all_shards:
+        shard_rel = Path(shard_name)
+        if (
+            not shard_name
+            or shard_rel.is_absolute()
+            or ".." in shard_rel.parts
+            or len(shard_rel.parts) != 1
+            or shard_name in (".", "..")
+        ):
+            raise ValueError(
+                f"Unsafe or non-basename shard filename '{shard_name}' in weight_map of {idx_file}"
+            )
+        in_cand = (src_dir / shard_name).resolve()
+        out_cand = (out_dir / shard_name).resolve()
+        if in_cand.parent != src_dir or out_cand.parent != out_dir:
+            raise ValueError(
+                f"Path traversal detected for shard '{shard_name}' in {idx_file}"
+            )
+
+    # Group surgical edits by shard filename
+    edits_by_shard: dict[str, dict[str, Callable[[np.ndarray], np.ndarray]]] = {}
+    for tname, fn in surgical_edits.items():
+        shard_name = weight_map[tname]
+        edits_by_shard.setdefault(shard_name, {})[tname] = fn
+
+    edited_shards: list[str] = []
+    untouched_shards: list[str] = []
+    updated_tensors: list[str] = []
+
+    for shard_name in all_shards:
+        in_shard = src_dir / shard_name
+        out_shard = out_dir / shard_name
+        if not in_shard.is_file():
+            raise FileNotFoundError(f"Referenced safetensors shard missing: {in_shard}")
+        if shard_name in edits_by_shard:
+            edited = stream_surgical_safetensors_update(
+                in_shard,
+                out_shard,
+                edits_by_shard[shard_name],
+            )
+            edited_shards.append(shard_name)
+            updated_tensors.extend(edited)
+        else:
+            untouched_shards.append(shard_name)
+            if in_shard.resolve() != out_shard.resolve():
+                if out_shard.exists():
+                    out_shard.unlink()
+                if link_untouched_shards:
+                    try:
+                        os.link(in_shard, out_shard)
+                    except OSError:
+                        shutil.copy2(in_shard, out_shard)
+                else:
+                    shutil.copy2(in_shard, out_shard)
+
+    meta = dict(index_data.get("metadata", {}))
+    meta["circuitforge_edited_shards"] = edited_shards
+    meta["circuitforge_edited_tensors"] = sorted(updated_tensors)
+    out_index_data = {
+        "metadata": meta,
+        "weight_map": weight_map,
+    }
+    out_idx_file = out_dir / "model.safetensors.index.json"
+    out_idx_file.write_text(json.dumps(out_index_data, indent=2) + "\n", encoding="utf-8")
+
+    # Copy config.json if present alongside the index
+    src_cfg = src_dir / "config.json"
+    if src_cfg.is_file():
+        dst_cfg = out_dir / "config.json"
+        if src_cfg.resolve() != dst_cfg.resolve():
+            shutil.copy2(src_cfg, dst_cfg)
+
+    return {
+        "index_path": str(out_idx_file),
+        "total_shards": len(all_shards),
+        "edited_shards": edited_shards,
+        "untouched_shards": untouched_shards,
+        "updated_tensors": sorted(updated_tensors),
+    }

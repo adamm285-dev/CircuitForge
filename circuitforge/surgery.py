@@ -366,6 +366,138 @@ def apply_directional_ablation(
     return W_new.astype(weight.dtype), report
 
 
+def apply_leace_concept_erasure(
+    weight: np.ndarray,
+    activations: np.ndarray,
+    concept_labels: np.ndarray,
+    regularization: float = 1e-4,
+    preserved_keys: np.ndarray | None = None,
+    return_mean_shift: bool = False,
+    tensor_name: str = "model.layers.3.self_attn.o_proj.weight",
+    layer_idx: int = 3,
+) -> tuple[np.ndarray, SurgicalEditReport] | tuple[np.ndarray, np.ndarray, SurgicalEditReport]:
+    r"""
+    Applies LEACE (Least-Squares Concept Erasure, Belrose et al.) to a projection matrix
+    $W \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$ given output activations
+    $X \in \mathbb{R}^{N \times d_{\text{out}}}$ and target/forbidden concept labels
+    $Z \in \mathbb{R}^{N \times k}$ (or 1D binary/continuous labels of shape `(N,)`):
+    1. Computes empirical covariance $\Sigma_{XX} = \frac{1}{N}\tilde{X}^\top \tilde{X} + \lambda I$
+       and cross-covariance $\Sigma_{XZ} = \frac{1}{N}\tilde{X}^\top \tilde{Z}$.
+    2. Constructs the symmetric Mahalanobis whitening matrix $W_{\text{whiten}} = \Sigma_{XX}^{-1/2}$
+       and unwhitening matrix $W_{\text{unwhiten}} = \Sigma_{XX}^{1/2}$.
+    3. Computes the orthogonal projector $P_W = U_r U_r^\top$ onto $\text{col}(W_{\text{whiten}} \Sigma_{XZ})$
+       and forms the oblique LEACE projector and affine mean-restoration bias $b_{\text{LEACE}}$:
+       $$P_{\text{LEACE}} = I - W_{\text{unwhiten}} P_W W_{\text{whiten}}, \qquad b_{\text{LEACE}} = (I - P_{\text{LEACE}})\mu_X$$
+    4. Updates $W_{\text{new}} = W + (P_{\text{LEACE}} - I) W P_\perp$ (where $P_\perp = I$ when
+       `preserved_keys` is None), guaranteeing $\text{Cov}(P_{\text{LEACE}} X + b_{\text{LEACE}}, Z) = 0$
+       while preserving $\mathbb{E}[X_{\text{erased}}] = \mu_X$ and $\Delta W K_0^\top = 0$!
+    """
+    if is_routed_expert_tensor(tensor_name):
+        raise PermissionError(
+            f"CircuitForge Safety Gate: Refusing to apply LEACE concept erasure to routed expert '{tensor_name}'."
+        )
+    if not math.isfinite(float(regularization)) or regularization <= 0.0:
+        raise ValueError("regularization must be a finite positive float.")
+    if not np.all(np.isfinite(weight)) or not np.all(np.isfinite(activations)) or not np.all(np.isfinite(concept_labels)):
+        raise ValueError("weight, activations, and concept_labels must be finite (non-NaN, non-Inf).")
+
+    W = np.asarray(weight, dtype=np.float64)
+    if W.ndim != 2:
+        raise ValueError(f"Expected 2D weight matrix (d_out, d_in), got {W.shape}")
+    d_out, _ = W.shape
+
+    X = np.asarray(activations, dtype=np.float64)
+    if X.ndim != 2 or X.shape[1] != d_out:
+        raise ValueError(f"Expected activations shape (N, {d_out}), got {X.shape}")
+    n_samples = X.shape[0]
+    if n_samples < 2:
+        raise ValueError("LEACE requires at least 2 activation samples.")
+
+    Z = np.asarray(concept_labels, dtype=np.float64)
+    if Z.ndim == 1:
+        Z = Z[:, None]
+    if Z.shape[0] != n_samples:
+        raise ValueError(f"Batch mismatch: X has {n_samples} rows, Z has {Z.shape[0]} rows")
+
+    mu_X = np.mean(X, axis=0)
+    X_centered = X - mu_X[None, :]
+    Z_centered = Z - np.mean(Z, axis=0, keepdims=True)
+
+    sigma_xx = (X_centered.T @ X_centered) / float(n_samples) + float(regularization) * np.eye(d_out, dtype=np.float64)
+    sigma_xz = (X_centered.T @ Z_centered) / float(n_samples)  # (d_out, k)
+
+    cov_before = float(np.linalg.norm(sigma_xz, ord="fro"))
+    if cov_before <= 1e-12:
+        report = SurgicalEditReport(
+            tensor_name=tensor_name,
+            layer_idx=layer_idx,
+            shape=W.shape,
+            alpha=1.0,
+            frobenius_delta=0.0,
+            relative_norm_delta=0.0,
+            nullspace_leakage_max=0.0,
+            target_alignment_before=0.0,
+            target_alignment_after=0.0,
+        )
+        if return_mean_shift:
+            return W.astype(weight.dtype), np.zeros(d_out, dtype=weight.dtype), report
+        return W.astype(weight.dtype), report
+
+    # Symmetric eigendecomposition of SPD covariance sigma_xx = Q diag(eigvals) Q^T
+    eigvals, Q = np.linalg.eigh(sigma_xx)
+    eigvals_clamped = np.maximum(eigvals, 1e-12)
+    W_whiten = (Q * (1.0 / np.sqrt(eigvals_clamped))[None, :]) @ Q.T
+    W_unwhiten = (Q * np.sqrt(eigvals_clamped)[None, :]) @ Q.T
+
+    whitened_cross = W_whiten @ sigma_xz  # (d_out, k)
+    u_w, s_w, _ = np.linalg.svd(whitened_cross, full_matrices=False)
+    s_tol = max(1e-12, float(s_w[0]) * 1e-7) if len(s_w) > 0 else 1e-12
+    r_concept = int(np.sum(s_w > s_tol))
+    u_basis = u_w[:, :r_concept]  # (d_out, r_concept)
+    P_whitened = u_basis @ u_basis.T
+
+    A_oblique = W_unwhiten @ P_whitened @ W_whiten
+    P_leace = np.eye(d_out, dtype=np.float64) - A_oblique
+    b_leace = A_oblique @ mu_X  # Affine mean-preservation shift: (I - P_leace) @ mu_X
+
+    raw_delta_W = -A_oblique @ W
+    if preserved_keys is not None and preserved_keys.size > 0:
+        P_perp = compute_nullspace_projector(preserved_keys)
+        delta_W = raw_delta_W @ P_perp
+        K0 = np.asarray(preserved_keys, dtype=np.float64)
+        if K0.ndim == 1:
+            K0 = K0[None, :]
+        leakage_max = float(np.max(np.abs(delta_W @ K0.T)))
+    else:
+        delta_W = raw_delta_W
+        leakage_max = 0.0
+
+    W_new = W + delta_W
+
+    X_erased = (X @ P_leace.T) + b_leace[None, :]
+    X_erased_centered = X_erased - np.mean(X_erased, axis=0, keepdims=True)
+    sigma_xz_after = (X_erased_centered.T @ Z_centered) / float(n_samples)
+    cov_after = float(np.linalg.norm(sigma_xz_after, ord="fro"))
+
+    frob_delta = float(np.linalg.norm(delta_W, ord="fro"))
+    frob_base = max(float(np.linalg.norm(W, ord="fro")), 1e-12)
+
+    report = SurgicalEditReport(
+        tensor_name=tensor_name,
+        layer_idx=layer_idx,
+        shape=W.shape,
+        alpha=1.0,
+        frobenius_delta=frob_delta,
+        relative_norm_delta=frob_delta / frob_base,
+        nullspace_leakage_max=leakage_max,
+        target_alignment_before=cov_before,
+        target_alignment_after=cov_after,
+    )
+    if return_mean_shift:
+        return W_new.astype(weight.dtype), b_leace.astype(weight.dtype), report
+    return W_new.astype(weight.dtype), report
+
+
 def distribute_multilayer_surgery(
     layer_weights: dict[int, np.ndarray],
     trigger_keys: dict[int, np.ndarray],

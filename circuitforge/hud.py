@@ -31,6 +31,7 @@ from urllib.parse import urlparse, urlsplit
 
 import numpy as np
 
+from circuitforge.compiler import RuleSpec, compile_constraint_gate
 from circuitforge.native import (
     NativeTelemetryRingBuffer,
     TelemetryEvent,
@@ -148,6 +149,64 @@ class MechanisticTelemetryHUD:
             if t_idx < len(self.tokens):
                 mixed = 0.88 * self._trigger_key + 0.12 * self._token_keys[t_idx]
                 self._token_keys[t_idx] = mixed / max(float(np.linalg.norm(mixed)), 1e-8)
+
+        # Build action unembedding matrix W_lm_head (3, d_model) and compiled RASP gate circuit
+        # Row 0: positive steered reflex (+steering_vec) -> edit_file state.md
+        # Row 1: baseline unsteered reflex (mean anchor W_base @ trigger_key) -> read_file billing.py
+        # Row 2: negative anti-steered reflex (-steering_vec) -> write_file billing.py
+        anchor_indices = self.active_anchor_layers if self.active_anchor_layers else [0]
+        base_out = np.mean(
+            [self._base_weights[idx] @ self._trigger_key for idx in anchor_indices],
+            axis=0,
+        )
+        base_unit = (base_out / max(float(np.linalg.norm(base_out)), 1e-8)).astype(np.float32)
+        self._W_lm_head = np.stack(
+            [
+                self._steering_vec * 2.5,
+                base_unit * 2.1,
+                -self._steering_vec * 2.5,
+            ],
+            axis=0,
+        ).astype(np.float32)
+        self._lm_bias = np.array([-0.55, 0.25, -0.35], dtype=np.float32)
+        self._action_candidates = (
+            (
+                "state_locked edit_state_md",
+                '<tool_call>{"name": "edit_file", "arguments": {"path": "state.md", '
+                '"target": "## Active Sprint", "replacement": "- [ ] Update billing.py"}}</tool_call>',
+                "SDCS_SPEC_LOCKED",
+            ),
+            (
+                "baseline_read billing_py",
+                '<tool_call>{"name": "read_file", "arguments": {"path": "billing.py"}}</tool_call>',
+                "NEUTRAL_BASELINE",
+            ),
+            (
+                "unscaffolded_overwrite requirement sprint",
+                '<tool_call>{"name": "write_file", "arguments": {"path": "billing.py", '
+                '"content": "# Unscaffolded full overwrite..."}}</tool_call>',
+                "ANTI_PATTERN_UNSCAFFOLDED",
+            ),
+        )
+        self._gate_circuit = compile_constraint_gate(
+            rules=[
+                RuleSpec(
+                    name="sdcs_spec_locked_rule",
+                    target_gate="SPEC_LOCK_REQUIRED",
+                    all_of_tokens=("state_locked", "edit_state_md"),
+                    priority=3.0,
+                ),
+                RuleSpec(
+                    name="anti_pattern_unscaffolded_rule",
+                    target_gate="ZERO_READ_VIOLATION",
+                    all_of_tokens=("unscaffolded_overwrite", "requirement"),
+                    priority=2.5,
+                ),
+            ],
+            d_model=32,
+            d_hidden=32,
+            vocab_capacity=32,
+        )
 
         self._ringbuf: NativeTelemetryRingBuffer | None = (
             NativeTelemetryRingBuffer(capacity=256) if has_native_engine() else None
@@ -338,24 +397,21 @@ class MechanisticTelemetryHUD:
         )
         alignment_profile = compute_cross_layer_alignment(layer_trigger_reps, self._steering_vec)
 
-        if self.global_alpha >= 0.8:
-            # MOCK(M-002): Deterministic HUD tool-call preview templates driven by live steering multiplier alpha.
-            predicted_action = (
-                '<tool_call>{"name": "edit_file", "arguments": {"path": "state.md", '
-                '"target": "## Active Sprint", "replacement": "- [ ] Update billing.py"}}</tool_call>'
-            )
-            compliance_tag = "SDCS_SPEC_LOCKED"
-        elif self.global_alpha <= -0.5:
-            predicted_action = (
-                '<tool_call>{"name": "write_file", "arguments": {"path": "billing.py", '
-                '"content": "# Unscaffolded full overwrite..."}}</tool_call>'
-            )
-            compliance_tag = "ANTI_PATTERN_UNSCAFFOLDED"
-        else:
-            predicted_action = (
-                '<tool_call>{"name": "read_file", "arguments": {"path": "billing.py"}}</tool_call>'
-            )
-            compliance_tag = "NEUTRAL_BASELINE"
+        # Decode the live steered anchor representation through the unembedding matrix W_lm_head
+        # and verify the decoded token stream through the compiled RASP micro-circuit gate!
+        anchor_indices = self.active_anchor_layers if self.active_anchor_layers else [n_layers - 1]
+        final_rep = np.mean(layer_trigger_reps[anchor_indices], axis=0)
+        rep_unit = final_rep / max(float(np.linalg.norm(final_rep)), 1e-8)
+        action_logits = (self._W_lm_head @ rep_unit) + self._lm_bias
+        win_action_idx = int(np.argmax(action_logits))
+        symbolic_tokens_str, predicted_action, _ = self._action_candidates[win_action_idx]
+        gate_res = self._gate_circuit.predict_gate(symbolic_tokens_str, token_count_override=len(self.tokens))
+        gate_map = {
+            "SPEC_LOCK_REQUIRED": "SDCS_SPEC_LOCKED",
+            "ZERO_READ_VIOLATION": "ANTI_PATTERN_UNSCAFFOLDED",
+            "PASS_THROUGH": "NEUTRAL_BASELINE",
+        }
+        compliance_tag = gate_map.get(gate_res["gate"], "NEUTRAL_BASELINE")
 
         self._last_state = {
             "step_id": self._step_counter,

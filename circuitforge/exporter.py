@@ -15,15 +15,16 @@ Implements the publication and packaging layer of Milestone CFM-08:
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from circuitforge.gguf import write_gguf_file
-from circuitforge.io import save_safetensors_file
+from circuitforge.io import inspect_safetensors_header, load_safetensors_file, save_safetensors_file
 from circuitforge.recipes import ForgeRecipe, SurgeryStepSpec, execute_forge_recipe
-from circuitforge.wiring import load_wiring_map
+from circuitforge.wiring import is_routed_expert_tensor, load_wiring_map
 
 
 def render_model_card_markdown(
@@ -144,12 +145,38 @@ def export_model_card(
     return out
 
 
+def build_reference_checkpoint(
+    output_path: str | Path,
+    base_profile: str = "Qwen3.6-35B-A3B",
+    d_model: int = 32,
+    seed: int = 42,
+) -> Path:
+    """
+    Constructs a compact deterministic `.safetensors` checkpoint containing the target
+    profile's planning anchor control projections (`self_attn.o_proj.weight`) and a frozen
+    routed-expert canary tensor (`mlp.experts.0.down_proj.weight`).
+    """
+    wmap = load_wiring_map(profile_name=base_profile)
+    anchors = list(wmap.mid_to_late_planning_anchors[:4]) or [0]
+    rng = np.random.default_rng(seed)
+    base_tensors: dict[str, np.ndarray] = {}
+    for l_idx in anchors:
+        base_tensors[f"model.layers.{l_idx}.self_attn.o_proj.weight"] = (
+            rng.standard_normal((d_model, d_model)).astype(np.float32) * 0.05
+        )
+    base_tensors[f"model.layers.{anchors[0]}.mlp.experts.0.down_proj.weight"] = (
+        rng.standard_normal((d_model, d_model)).astype(np.float32) * 0.05
+    )
+    return save_safetensors_file(output_path, base_tensors, metadata={"profile": base_profile})
+
+
 def export_forged_bundle(
     output_dir: str | Path,
     model_id: str = "Qwen3.6-35B-A3B-CircuitForged",
     base_profile: str = "Qwen3.6-35B-A3B",
     alpha: float = 2.0,
     d_model: int = 32,
+    checkpoint_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """
     Creates a complete self-contained forged model bundle in `output_dir`:
@@ -164,25 +191,25 @@ def export_forged_bundle(
     wmap = load_wiring_map(profile_name=base_profile)
     anchors = list(wmap.mid_to_late_planning_anchors[:4]) or [0]
 
-    rng = np.random.default_rng(42)
-    # MOCK(M-003): Compact seeded reference weights for standalone demo bundle generation when no 70GB checkpoint is supplied.
-    base_tensors: dict[str, np.ndarray] = {}
-    for l_idx in anchors:
-        base_tensors[f"model.layers.{l_idx}.self_attn.o_proj.weight"] = (
-            rng.standard_normal((d_model, d_model)).astype(np.float32) * 0.05
-        )
-    # Include a frozen routed expert tensor to prove preservation in the bundle
-    base_tensors[f"model.layers.{anchors[0]}.mlp.experts.0.down_proj.weight"] = (
-        rng.standard_normal((d_model, d_model)).astype(np.float32) * 0.05
-    )
-
-    base_st_path = bundle_dir / "base_checkpoint.safetensors"
     forged_st_path = bundle_dir / "model_forged.safetensors"
     forged_gguf_path = bundle_dir / "model_forged.gguf"
     recipe_json_path = bundle_dir / "forge_recipe.forge.json"
     card_md_path = bundle_dir / "README.md"
 
-    save_safetensors_file(base_st_path, base_tensors, metadata={"profile": base_profile})
+    cleanup_base = False
+    if checkpoint_path is not None:
+        base_st_path = Path(checkpoint_path).resolve()
+        entries, _, _ = inspect_safetensors_header(base_st_path)
+        present_anchors = [
+            l_idx for l_idx in range(wmap.num_layers)
+            if f"model.layers.{l_idx}.self_attn.o_proj.weight" in entries
+        ]
+        if present_anchors:
+            anchors = present_anchors
+    else:
+        base_st_path = bundle_dir / "base_checkpoint.safetensors"
+        build_reference_checkpoint(base_st_path, base_profile=base_profile, d_model=d_model)
+        cleanup_base = True
 
     recipe = ForgeRecipe(
         recipe_name=f"{model_id}_recipe",
@@ -210,18 +237,19 @@ def export_forged_bundle(
         output_path=forged_st_path,
     )
 
-    from circuitforge.io import load_safetensors_file
-
     forged_tensors, _ = load_safetensors_file(forged_st_path)
 
     # Also write GGUF v3 binary representation from the FORGED tensors
-    gguf_tensors = {
-        f"blk.{l_idx}.attn_output.weight": forged_tensors[f"model.layers.{l_idx}.self_attn.o_proj.weight"]
-        for l_idx in anchors
-    }
-    gguf_tensors[f"blk.{anchors[0]}.ffn_down_exps.weight"] = forged_tensors[
-        f"model.layers.{anchors[0]}.mlp.experts.0.down_proj.weight"
-    ]
+    gguf_tensors: dict[str, np.ndarray] = {}
+    for l_idx in anchors:
+        st_key = f"model.layers.{l_idx}.self_attn.o_proj.weight"
+        if st_key in forged_tensors:
+            gguf_tensors[f"blk.{l_idx}.attn_output.weight"] = forged_tensors[st_key]
+    for st_key, arr in forged_tensors.items():
+        if is_routed_expert_tensor(st_key):
+            gguf_tensors[f"blk.{anchors[0]}.ffn_down_exps.weight"] = arr
+            break
+
     write_gguf_file(
         forged_gguf_path,
         gguf_tensors,
@@ -239,8 +267,8 @@ def export_forged_bundle(
         recipe_result=recipe_result,
     )
 
-    # Clean up temporary base checkpoint
-    base_st_path.unlink(missing_ok=True)
+    if cleanup_base:
+        base_st_path.unlink(missing_ok=True)
 
     return {
         "bundle_dir": str(bundle_dir),
@@ -252,3 +280,150 @@ def export_forged_bundle(
         "edited_tensors_count": recipe_result["edited_tensors_count"],
         "max_nullspace_leakage": recipe_result["max_nullspace_leakage"],
     }
+
+
+def export_surgical_lora(
+    output_dir: str | Path,
+    delta_weights: dict[str, np.ndarray],
+    rank: int = 4,
+    lora_alpha: float = 16.0,
+    base_model_name: str = "Qwen3.6-35B-A3B",
+) -> dict[str, Any]:
+    r"""
+    Factors a dictionary of surgical weight deltas $\Delta W_l \in \mathbb{R}^{d_{\text{out}} \times d_{\text{in}}}$
+    into exact low-rank LoRA matrices $B_l \in \mathbb{R}^{d_{\text{out}} \times r}$ and
+    $A_l \in \mathbb{R}^{r \times d_{\text{in}}}$ via SVD ($\Delta W_l \approx \frac{\alpha}{r} B_l A_l$)
+    and exports a standard Hugging Face PEFT LoRA bundle:
+    - `adapter_model.safetensors`
+    - `adapter_config.json`
+    Strictly rejects any routed MoE expert tensor in `delta_weights`.
+    """
+    if rank < 1:
+        raise ValueError(f"LoRA rank must be >= 1, got {rank}")
+    if not math.isfinite(float(lora_alpha)) or float(lora_alpha) <= 0.0:
+        raise ValueError(f"lora_alpha must be a finite positive float, got {lora_alpha}")
+    for tname in delta_weights:
+        if is_routed_expert_tensor(tname):
+            raise PermissionError(
+                f"CircuitForge Safety Gate: Cannot export LoRA adapter for routed expert '{tname}'."
+            )
+
+    out_dir = Path(output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    scaling = float(lora_alpha) / float(rank)
+    inv_scale = 1.0 / scaling
+    lora_tensors: dict[str, np.ndarray] = {}
+    target_modules: set[str] = set()
+    max_recon_err = 0.0
+
+    for tname, dw in delta_weights.items():
+        mat = np.asarray(dw, dtype=np.float64)
+        if mat.ndim != 2:
+            raise ValueError(f"Expected 2D surgical delta for '{tname}', got {mat.shape}")
+        if not np.all(np.isfinite(mat)):
+            raise ValueError(f"Surgical delta for '{tname}' contains NaN or Inf.")
+        d_out, d_in = mat.shape
+        r_eff = min(rank, d_out, d_in)
+
+        u, s, vt = np.linalg.svd(mat * inv_scale, full_matrices=False)
+        sqrt_s = np.sqrt(np.maximum(s[:r_eff], 0.0))
+        B = (u[:, :r_eff] * sqrt_s[None, :]).astype(np.float32)  # (d_out, r_eff)
+        A = (sqrt_s[:, None] * vt[:r_eff, :]).astype(np.float32)  # (r_eff, d_in)
+
+        if r_eff < rank:
+            B_pad = np.zeros((d_out, rank), dtype=np.float32)
+            A_pad = np.zeros((rank, d_in), dtype=np.float32)
+            B_pad[:, :r_eff] = B
+            A_pad[:r_eff, :] = A
+            B, A = B_pad, A_pad
+
+        # Reconstruct in float64 to measure true Frobenius low-rank approximation error
+        recon = scaling * (B.astype(np.float64) @ A.astype(np.float64))
+        err = float(np.linalg.norm(recon - mat, ord="fro"))
+        max_recon_err = max(max_recon_err, err)
+
+        stem = tname[:-7] if tname.endswith(".weight") else tname
+        peft_prefix = stem if stem.startswith("base_model.model.") else f"base_model.model.{stem}"
+        lora_tensors[f"{peft_prefix}.lora_A.weight"] = A
+        lora_tensors[f"{peft_prefix}.lora_B.weight"] = B
+
+        # Record exact module path (without base_model.model.) so PEFT never attaches to frozen routed experts
+        mod_path = stem[len("base_model.model.") :] if stem.startswith("base_model.model.") else stem
+        target_modules.add(mod_path)
+
+    st_path = out_dir / "adapter_model.safetensors"
+    cfg_path = out_dir / "adapter_config.json"
+
+    save_safetensors_file(
+        st_path,
+        lora_tensors,
+        metadata={"format": "pt", "circuitforge_lora_rank": str(rank)},
+    )
+
+    adapter_cfg = {
+        "peft_type": "LORA",
+        "task_type": "CAUSAL_LM",
+        "base_model_name_or_path": base_model_name,
+        "r": int(rank),
+        "lora_alpha": float(lora_alpha),
+        "lora_dropout": 0.0,
+        "bias": "none",
+        "target_modules": sorted(target_modules),
+    }
+    cfg_path.write_text(json.dumps(adapter_cfg, indent=2) + "\n", encoding="utf-8")
+
+    return {
+        "output_dir": str(out_dir),
+        "adapter_safetensors": str(st_path),
+        "adapter_config": str(cfg_path),
+        "rank": int(rank),
+        "lora_alpha": float(lora_alpha),
+        "num_adapted_layers": len(delta_weights),
+        "target_modules": sorted(target_modules),
+        "max_reconstruction_error": max_recon_err,
+    }
+
+
+def export_gguf_control_vector(
+    output_path: str | Path,
+    steering_vectors: dict[int, np.ndarray],
+    model_hint: str = "qwen3moe",
+    one_based_indexing: bool = False,
+) -> Path:
+    """
+    Exports a dictionary of per-layer steering vectors `{layer_idx: vec_1d}` into a
+    `llama.cpp`-compatible `--control-vector` GGUF v3 file (`direction.{idx}` tensors
+    with `general.architecture = "controlvector"`).
+    Validates that all layer indices are non-negative (`>= 1` when `one_based_indexing=True`,
+    or `>= 0` when 0-based indices are passed and optionally shifted by `+1` via `one_based_indexing`)
+    and that all vectors share an identical 1D hidden dimension `n_embd`.
+    """
+    if not steering_vectors:
+        raise ValueError("steering_vectors dictionary cannot be empty.")
+    gguf_tensors: dict[str, np.ndarray] = {}
+    expected_dim: int | None = None
+    for l_idx, vec in sorted(steering_vectors.items()):
+        if isinstance(l_idx, bool) or int(l_idx) < 0:
+            raise ValueError(f"Control-vector layer index must be non-negative, got {l_idx}")
+        arr = np.ascontiguousarray(vec, dtype=np.float32).reshape(-1)
+        if arr.size == 0:
+            raise ValueError(f"Steering vector for layer {l_idx} cannot be empty.")
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(f"Steering vector for layer {l_idx} contains NaN or Inf.")
+        if expected_dim is None:
+            expected_dim = int(arr.size)
+        elif int(arr.size) != expected_dim:
+            raise ValueError(
+                f"Inconsistent steering vector dimension at layer {l_idx}: "
+                f"expected {expected_dim}, got {arr.size}"
+            )
+        out_idx = int(l_idx) + 1 if (one_based_indexing or int(l_idx) == 0) and one_based_indexing else int(l_idx)
+        gguf_tensors[f"direction.{out_idx}"] = arr
+
+    metadata: dict[str, str | int | float | bool] = {
+        "general.architecture": "controlvector",
+        "controlvector.model_hint": model_hint,
+        "controlvector.layer_count": len(gguf_tensors),
+    }
+    return write_gguf_file(output_path, gguf_tensors, metadata=metadata)
