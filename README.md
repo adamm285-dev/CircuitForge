@@ -35,13 +35,14 @@ Standard reinforcement learning (`PPO` / `GRPO`) and naive fine-tuning treat Mix
    - C++ SIMD-accelerated concurrent hash table (`CFEngramTable` / `DiscreteEngramGraph`) storing discrete episodic invariants in host RAM and injecting additive biases directly into intermediate layer RMSNorm activations at zero KV-cache token cost, paired with `ParametricAdapterManifold` for geodesic SLERP (`slerp_adapters`), TIES + null-space adapter merging, and principal manifold coordinate sampling.
 8. **Tracr / RASP-Style Symbolic-to-Weight Micro-Circuit Compiler (`circuitforge/compiler.py`):**
    - Deterministically compiles symbolic RASP-style token selector predicates, boolean conjunctions/vetoes (`RuleSpec`), and numeric token-budget thresholds directly into an exact 2-layer `91,780`-parameter gate network (`CompiledMicroCircuit`) with **0 gradient steps** (`python -m circuitforge verify-compiler`).
-9. **Zero-Dependency GGUF v3 Quantized Surgery (`Q8_0`, `Q4_0`, `BF16`) & Exporters (`circuitforge/gguf.py`, `circuitforge/exporter.py`):**
-   - Parses, slices, and writes 32-byte aligned GGUF v3 binary files (`inspect-gguf`) across `F32`, `F16`, `BF16`, `Q8_0` (`34 B/block`), and `Q4_0` (`18 B/block`).
+9. **Zero-Dependency GGUF v3 Quantized Surgery (`Q4_K`, `Q6_K`, `Q8_0`, `Q4_0`, `BF16`) & Exporters (`circuitforge/gguf.py`, `circuitforge/exporter.py`):**
+   - Parses, slices, and writes 32-byte aligned GGUF v3 binary files (`inspect-gguf`) across `F32`, `F16`, `BF16`, `Q8_0` (`34 B/block`), `Q4_0` (`18 B/block`), `Q4_K` (`144 B/super-block`), and `Q6_K` (`210 B/super-block`).
    - Streams surgical updates directly onto quantized GGUF checkpoints (`stream_surgical_gguf_update`) and multi-shard Hugging Face `model.safetensors.index.json` directories (`apply_sharded_checkpoint_surgery`) while leaving untouched routed-expert shards byte-identical.
    - Exports surgical weight deltas (`\Delta W`) as Hugging Face PEFT LoRA adapters (`export-lora` -> `adapter_model.safetensors` + `adapter_config.json`), `llama.cpp` `--control-vector` GGUF files (`export_gguf_control_vector`), and Hugging Face Model Card bundles (`export-card --bundle`).
-10. **LEACE Concept Erasure & Automated Causal Circuit Discovery (`circuitforge/surgery.py`, `circuitforge/attribution.py`):**
+10. **LEACE Concept Erasure, Automated Causal Circuit Discovery & Live Activation Harvester (`circuitforge/surgery.py`, `circuitforge/attribution.py`, `circuitforge/harvester.py`):**
     - Implements **LEACE (Least-Squares Concept Erasure)** (`apply_leace_concept_erasure`) using oblique Mahalanobis whitening projection ($P_{\text{LEACE}} = I - \Sigma_{XX}^{1/2} P_W \Sigma_{XX}^{-1/2}$) to provably zero out linear concept covariance $\Sigma_{XZ} = 0$ on control layers.
     - Includes an **Automated Causal Attribution Sweeper** (`discover-circuit` / `discover_optimal_surgical_circuit`) that sweeps candidate layers for **Direct Logit Attribution (DLA)**, **Activation Patching Recovery (APR)**, and **Null-Space Signal-to-Leakage Ratio (SLR)** to automatically rank layers and emit an optimal `.forge.json` surgical recipe.
+    - Provides a **Multi-Layer Checkpoint & Live PyTorch Hook Activation Harvester** (`harvest-activations` / `harvest_checkpoint_activations` / `harvest_pytorch_module_activations`) that extracts exact pre-projection input keys (`trigger_keys`, `preserved_keys`) and post-projection outputs (`pos_acts`, `neg_acts`, `clean_acts`, `corrupt_acts`) into `.safetensors` activation bundles.
 11. **Verifiable Multi-Turn Agent RL Environment (`circuitforge/rl_env.py`) & Autograd (`circuitforge/autograd.py`):**
    - Gymnasium / `verifiers`-compatible RLVR environment (`VerifiableCodingEnv`) with deterministic step-level process rewards and pure-NumPy reverse-mode automatic differentiation.
 
@@ -90,7 +91,10 @@ python -m circuitforge discover-circuit --profile Qwen3.6-35B-A3B --top-k 2 --ou
 # 9. Export surgical weight deltas as a Hugging Face PEFT LoRA adapter (or --control-vector GGUF)
 python -m circuitforge export-lora --out ./lora_adapter --rank 4
 
-# 10. Run the full pytest suite (63 tests across CFM-01 through CFM-12 + adversarial audits)
+# 10. Harvest multi-layer forward activations from a checkpoint into a .safetensors bundle
+python -m circuitforge harvest-activations model.safetensors --layers 3,7 --out acts.safetensors
+
+# 11. Run the full pytest suite (66 tests across CFM-01 through CFM-14 + adversarial audits)
 pytest -v
 ```
 

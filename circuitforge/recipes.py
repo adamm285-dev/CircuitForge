@@ -418,6 +418,7 @@ def execute_forge_recipe(
                 else 0
             )
 
+            K0_harvested: np.ndarray | None = None
             if step.activations_file:
                 apath = Path(step.activations_file)
                 if not apath.is_absolute():
@@ -433,6 +434,10 @@ def execute_forge_recipe(
                 pos_acts = np.asarray(act_tensors[pos_key], dtype=np.float32)
                 neg_acts = np.asarray(act_tensors[neg_key], dtype=np.float32)
                 trig_keys = np.asarray(act_tensors[trig_key], dtype=np.float32)
+                if f"layer_{l_idx}.preserved_keys" in act_tensors:
+                    K0_harvested = np.asarray(act_tensors[f"layer_{l_idx}.preserved_keys"], dtype=np.float32)
+                elif "preserved_keys" in act_tensors:
+                    K0_harvested = np.asarray(act_tensors["preserved_keys"], dtype=np.float32)
             elif pairs:
                 pos_acts, neg_acts, trig_keys = compute_weight_backed_activations(pairs, W)
             else:
@@ -443,7 +448,9 @@ def execute_forge_recipe(
                 )
 
             K0 = None
-            if k_count > 0:
+            if K0_harvested is not None and recipe.preserve_nullspace:
+                K0 = K0_harvested[: max(k_count, 1)] if k_count > 0 else K0_harvested
+            elif k_count > 0:
                 # Extract top-k_count canonical right-singular input directions of W as the baseline syntax subspace K0
                 u_w, s_w, vt_w = np.linalg.svd(np.asarray(W, dtype=np.float64), full_matrices=False)
                 if len(s_w) >= k_count and float(s_w[0]) > 1e-12:

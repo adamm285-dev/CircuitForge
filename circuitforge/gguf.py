@@ -355,6 +355,230 @@ def dequantize_q4_0_bytes(raw_bytes: bytes, shape: tuple[int, ...]) -> np.ndarra
     return (d_f32 * qs_f32).reshape(shape).astype(np.float32)
 
 
+def quantize_q4_k_bytes(arr: np.ndarray) -> bytes:
+    """
+    Quantizes a float32 NumPy array (innermost dimension divisible by 256) into standard
+    `ggml` `block_q4_K` super-blocks (`144 bytes/block` for 256 elements):
+    - `d` (`float16`, 2 bytes) and `dmin` (`float16`, 2 bytes)
+    - `scales` (`12 uint8` bytes packing eight 6-bit sub-block scales `sc[0..7]` and eight
+      6-bit sub-block mins `m[0..7]` via `ggml`'s `get_scale_min_k4` layout)
+    - `qs` (`128 uint8` bytes: four 64-element chunks, each packing 32 low nibbles and 32 high nibbles).
+    Reconstructed value in sub-block `j` (`0..7`): `x = d * sc[j] * q - dmin * m[j]`.
+    """
+    np_arr = np.asarray(arr, dtype=np.float32)
+    if not np.all(np.isfinite(np_arr)):
+        raise ValueError("Cannot quantize tensor containing NaN or Inf to Q4_K.")
+    if np_arr.ndim >= 1 and np_arr.shape[-1] % 256 != 0:
+        raise ValueError(
+            f"Q4_K quantization requires innermost dimension shape[-1] divisible by 256, got shape {np_arr.shape}"
+        )
+    flat = np_arr.reshape(-1)
+    if flat.size % 256 != 0:
+        raise ValueError(f"Q4_K quantization requires element count divisible by 256, got {flat.size}")
+    n_blocks = flat.size // 256
+    sub_blocks = flat.reshape(n_blocks, 8, 32)
+
+    # Sub-block non-negative min offset: m_raw = max(-min(x), 0) so x + m_raw >= 0
+    min_vals = np.min(sub_blocks, axis=2)  # (n_blocks, 8)
+    max_vals = np.max(sub_blocks, axis=2)  # (n_blocks, 8)
+    m_raw = np.maximum(-min_vals, 0.0)     # (n_blocks, 8)
+    # Using initial m_raw, shifted span is max_vals + m_raw over [0..15]
+    s_raw = np.maximum((max_vals + m_raw) / 15.0, 0.0)  # (n_blocks, 8)
+
+    max_s = np.max(s_raw, axis=1)  # (n_blocks,)
+    max_m = np.max(m_raw, axis=1)  # (n_blocks,)
+
+    d_f16 = (max_s / 63.0).astype(np.float16)
+    dmin_f16 = (max_m / 63.0).astype(np.float16)
+    if not np.all(np.isfinite(d_f16)) or not np.all(np.isfinite(dmin_f16)):
+        raise ValueError("Q4_K super-block scale overflowed float16 range.")
+
+    d_f32 = d_f16.astype(np.float32)[:, None]       # (n_blocks, 1)
+    dmin_f32 = dmin_f16.astype(np.float32)[:, None] # (n_blocks, 1)
+
+    inv_d = np.where(d_f32 > 0.0, 1.0 / np.maximum(d_f32, 1e-30), 0.0)
+    inv_dmin = np.where(dmin_f32 > 0.0, 1.0 / np.maximum(dmin_f32, 1e-30), 0.0)
+
+    m_q = np.clip(np.round(m_raw * inv_dmin), 0, 63).astype(np.uint8)  # (n_blocks, 8)
+    eff_min = dmin_f32 * m_q.astype(np.float32)                        # (n_blocks, 8)
+
+    # Recompute optimal sub-block scale given quantized eff_min so max_vals + eff_min fits in 15 * d * sc
+    s_needed = np.maximum((max_vals + eff_min) / 15.0, 0.0)
+    sc_q = np.clip(np.round(s_needed * inv_d), 0, 63).astype(np.uint8)  # (n_blocks, 8)
+    eff_scale = (d_f32 * sc_q.astype(np.float32))[:, :, None]           # (n_blocks, 8, 1)
+    inv_eff_scale = np.where(eff_scale > 0.0, 1.0 / np.maximum(eff_scale, 1e-30), 0.0)
+
+    q_vals = np.clip(
+        np.round((sub_blocks + eff_min[:, :, None]) * inv_eff_scale),
+        0,
+        15,
+    ).astype(np.uint8)  # (n_blocks, 8, 32)
+
+    # Pack 12-byte scales array per ggml get_scale_min_k4 convention:
+    # bytes 0..3: (sc[0..3] & 63)
+    # bytes 4..7: (m[0..3] & 63)
+    # bytes 8..11: (sc[4..7] & 0x0F) | ((m[4..7] & 0x0F) << 4), while top 2 bits of sc[4..7]
+    #              go into bits 6..7 of bytes 0..3 and top 2 bits of m[4..7] go into bits 6..7 of bytes 4..7
+    scales_packed = np.empty((n_blocks, 12), dtype=np.uint8)
+    scales_packed[:, 0:4] = (sc_q[:, 0:4] & 0x3F) | ((sc_q[:, 4:8] >> 4) << 6)
+    scales_packed[:, 4:8] = (m_q[:, 0:4] & 0x3F) | ((m_q[:, 4:8] >> 4) << 6)
+    scales_packed[:, 8:12] = (sc_q[:, 4:8] & 0x0F) | ((m_q[:, 4:8] & 0x0F) << 4)
+
+    # Pack 128-byte qs array: for chunk c in 0..3, low nibble is sub_block 2*c, high nibble is sub_block 2*c + 1
+    q_pairs = q_vals.reshape(n_blocks, 4, 2, 32)
+    qs_packed = (q_pairs[:, :, 0, :] | (q_pairs[:, :, 1, :] << 4)).reshape(n_blocks, 128).astype(np.uint8)
+
+    out_dtype = np.dtype([("d", "<f2"), ("dmin", "<f2"), ("scales", "u1", (12,)), ("qs", "u1", (128,))])
+    structured = np.empty(n_blocks, dtype=out_dtype)
+    structured["d"] = d_f16
+    structured["dmin"] = dmin_f16
+    structured["scales"] = scales_packed
+    structured["qs"] = qs_packed
+    return structured.tobytes()
+
+
+def dequantize_q4_k_bytes(raw_bytes: bytes, shape: tuple[int, ...]) -> np.ndarray:
+    """
+    Dequantizes `ggml` `block_q4_K` super-blocks (`144 bytes/block` for 256 elements)
+    into a float32 NumPy array of `shape`.
+    """
+    if shape and shape[-1] % 256 != 0:
+        raise ValueError(f"Q4_K shape {shape} innermost dimension ({shape[-1]}) must be divisible by 256")
+    n_elems = int(np.prod(shape)) if shape else 1
+    if n_elems % 256 != 0:
+        raise ValueError(f"Q4_K shape {shape} element count ({n_elems}) must be divisible by 256")
+    n_blocks = n_elems // 256
+    expected = n_blocks * 144
+    if len(raw_bytes) != expected:
+        raise ValueError(f"Q4_K payload length mismatch: expected {expected} bytes, got {len(raw_bytes)}")
+
+    in_dtype = np.dtype([("d", "<f2"), ("dmin", "<f2"), ("scales", "u1", (12,)), ("qs", "u1", (128,))])
+    structured = np.frombuffer(raw_bytes, dtype=in_dtype)
+    d_f32 = structured["d"].astype(np.float32)[:, None]       # (n_blocks, 1)
+    dmin_f32 = structured["dmin"].astype(np.float32)[:, None] # (n_blocks, 1)
+    sc_bytes = structured["scales"]                           # (n_blocks, 12)
+
+    sc_q = np.empty((n_blocks, 8), dtype=np.float32)
+    m_q = np.empty((n_blocks, 8), dtype=np.float32)
+    sc_q[:, 0:4] = (sc_bytes[:, 0:4] & 0x3F).astype(np.float32)
+    m_q[:, 0:4] = (sc_bytes[:, 4:8] & 0x3F).astype(np.float32)
+    sc_q[:, 4:8] = ((sc_bytes[:, 8:12] & 0x0F) | ((sc_bytes[:, 0:4] >> 6) << 4)).astype(np.float32)
+    m_q[:, 4:8] = ((sc_bytes[:, 8:12] >> 4) | ((sc_bytes[:, 4:8] >> 6) << 4)).astype(np.float32)
+
+    qs_chunks = structured["qs"].reshape(n_blocks, 4, 32)
+    lo = (qs_chunks & 0x0F).astype(np.float32)
+    hi = (qs_chunks >> 4).astype(np.float32)
+    q_sub = np.stack([lo, hi], axis=2).reshape(n_blocks, 8, 32)
+
+    scales_eff = (d_f32 * sc_q)[:, :, None]
+    mins_eff = (dmin_f32 * m_q)[:, :, None]
+    out = scales_eff * q_sub - mins_eff
+    return out.reshape(shape).astype(np.float32)
+
+
+def quantize_q6_k_bytes(arr: np.ndarray) -> bytes:
+    """
+    Quantizes a float32 NumPy array (innermost dimension divisible by 256) into standard
+    `ggml` `block_q6_K` super-blocks (`210 bytes/block` for 256 elements):
+    - `ql` (`128 uint8` bytes: low 4 bits of the 256 6-bit quants)
+    - `qh` (`64 uint8` bytes: high 2 bits of the 256 6-bit quants)
+    - `scales` (`16 int8` sub-block scales, one per 16-element sub-block)
+    - `d` (`float16` super-block scale, 2 bytes).
+    Reconstructed value in 16-element sub-block `j` (`0..15`): `x = d * scales[j] * (q - 32)` where `q in [0..63]`.
+    """
+    np_arr = np.asarray(arr, dtype=np.float32)
+    if not np.all(np.isfinite(np_arr)):
+        raise ValueError("Cannot quantize tensor containing NaN or Inf to Q6_K.")
+    if np_arr.ndim >= 1 and np_arr.shape[-1] % 256 != 0:
+        raise ValueError(
+            f"Q6_K quantization requires innermost dimension shape[-1] divisible by 256, got shape {np_arr.shape}"
+        )
+    flat = np_arr.reshape(-1)
+    if flat.size % 256 != 0:
+        raise ValueError(f"Q6_K quantization requires element count divisible by 256, got {flat.size}")
+    n_blocks = flat.size // 256
+    sub_blocks = flat.reshape(n_blocks, 16, 16)
+
+    min_vals = np.min(sub_blocks, axis=2)  # (n_blocks, 16)
+    max_vals = np.max(sub_blocks, axis=2)  # (n_blocks, 16)
+    # Signed 6-bit grid is [-32, 31]
+    s_req = np.maximum(-min_vals / 32.0, max_vals / 31.0)  # (n_blocks, 16)
+    max_s = np.max(s_req, axis=1)                          # (n_blocks,)
+
+    d_f16 = (max_s / 127.0).astype(np.float16)
+    if not np.all(np.isfinite(d_f16)):
+        raise ValueError("Q6_K super-block scale overflowed float16 range.")
+    d_f32 = d_f16.astype(np.float32)[:, None]  # (n_blocks, 1)
+    inv_d = np.where(d_f32 > 0.0, 1.0 / np.maximum(d_f32, 1e-30), 0.0)
+
+    sc_i8 = np.clip(np.round(s_req * inv_d), -127, 127).astype(np.int8)  # (n_blocks, 16)
+    eff_scale = (d_f32 * sc_i8.astype(np.float32))[:, :, None]          # (n_blocks, 16, 1)
+    inv_eff = np.where(np.abs(eff_scale) > 0.0, 1.0 / np.where(eff_scale != 0.0, eff_scale, 1.0), 0.0)
+
+    q_u6 = np.clip(np.round(sub_blocks * inv_eff) + 32.0, 0, 63).astype(np.uint8)  # (n_blocks, 16, 16)
+    # Reshape into two 128-element halves: (n_blocks, 2, 4, 32)
+    q_halves = q_u6.reshape(n_blocks, 2, 4, 32)
+    q0 = q_halves[:, :, 0, :]
+    q1 = q_halves[:, :, 1, :]
+    q2 = q_halves[:, :, 2, :]
+    q3 = q_halves[:, :, 3, :]
+
+    ql_0 = (q0 & 0x0F) | ((q2 & 0x0F) << 4)  # (n_blocks, 2, 32)
+    ql_1 = (q1 & 0x0F) | ((q3 & 0x0F) << 4)  # (n_blocks, 2, 32)
+    ql = np.concatenate([ql_0, ql_1], axis=2).reshape(n_blocks, 128).astype(np.uint8)
+
+    qh = (
+        ((q0 >> 4) & 0x03)
+        | (((q1 >> 4) & 0x03) << 2)
+        | (((q2 >> 4) & 0x03) << 4)
+        | (((q3 >> 4) & 0x03) << 6)
+    ).reshape(n_blocks, 64).astype(np.uint8)
+
+    out_dtype = np.dtype([("ql", "u1", (128,)), ("qh", "u1", (64,)), ("scales", "i1", (16,)), ("d", "<f2")])
+    structured = np.empty(n_blocks, dtype=out_dtype)
+    structured["ql"] = ql
+    structured["qh"] = qh
+    structured["scales"] = sc_i8
+    structured["d"] = d_f16
+    return structured.tobytes()
+
+
+def dequantize_q6_k_bytes(raw_bytes: bytes, shape: tuple[int, ...]) -> np.ndarray:
+    """
+    Dequantizes `ggml` `block_q6_K` super-blocks (`210 bytes/block` for 256 elements)
+    into a float32 NumPy array of `shape`.
+    """
+    if shape and shape[-1] % 256 != 0:
+        raise ValueError(f"Q6_K shape {shape} innermost dimension ({shape[-1]}) must be divisible by 256")
+    n_elems = int(np.prod(shape)) if shape else 1
+    if n_elems % 256 != 0:
+        raise ValueError(f"Q6_K shape {shape} element count ({n_elems}) must be divisible by 256")
+    n_blocks = n_elems // 256
+    expected = n_blocks * 210
+    if len(raw_bytes) != expected:
+        raise ValueError(f"Q6_K payload length mismatch: expected {expected} bytes, got {len(raw_bytes)}")
+
+    in_dtype = np.dtype([("ql", "u1", (128,)), ("qh", "u1", (64,)), ("scales", "i1", (16,)), ("d", "<f2")])
+    structured = np.frombuffer(raw_bytes, dtype=in_dtype)
+    d_f32 = structured["d"].astype(np.float32)[:, None]       # (n_blocks, 1)
+    sc_f32 = structured["scales"].astype(np.float32)          # (n_blocks, 16)
+    ql = structured["ql"].reshape(n_blocks, 2, 64)
+    qh = structured["qh"].reshape(n_blocks, 2, 32)
+
+    ql_0 = ql[:, :, 0:32]
+    ql_1 = ql[:, :, 32:64]
+
+    q0 = ((ql_0 & 0x0F) | (((qh >> 0) & 0x03) << 4)).astype(np.int8) - 32
+    q1 = ((ql_1 & 0x0F) | (((qh >> 2) & 0x03) << 4)).astype(np.int8) - 32
+    q2 = ((ql_0 >> 4) | (((qh >> 4) & 0x03) << 4)).astype(np.int8) - 32
+    q3 = ((ql_1 >> 4) | (((qh >> 6) & 0x03) << 4)).astype(np.int8) - 32
+
+    q_halves = np.stack([q0, q1, q2, q3], axis=2).reshape(n_blocks, 16, 16).astype(np.float32)
+    eff_scales = (d_f32 * sc_f32)[:, :, None]
+    out = eff_scales * q_halves
+    return out.reshape(shape).astype(np.float32)
+
+
 def inspect_gguf_header(path: str | Path) -> dict[str, object]:
     """
     Parses a `.gguf` binary file header (versions 2 and 3) without loading tensor payloads.
@@ -532,9 +756,13 @@ def _encode_gguf_tensor_payload(arr: np.ndarray, target_type: str | None = None)
     """Encodes a NumPy array into raw GGUF bytes and returns `(ggml_type_id, raw_bytes)`."""
     np_arr = np.ascontiguousarray(arr)
     t_str = (target_type or "").upper()
-    if t_str in ("Q8_0", "Q4_0", "BF16", "F16", "F32") or not t_str:
+    if t_str in ("Q6_K", "Q4_K", "Q8_0", "Q4_0", "BF16", "F16", "F32") or not t_str:
         if not np.all(np.isfinite(np_arr)):
             raise ValueError(f"Cannot encode GGUF tensor containing NaN or Inf as {t_str or 'F32'}.")
+    if t_str == "Q6_K":
+        return NAME_TO_GGML_TYPE["Q6_K"], quantize_q6_k_bytes(np_arr)
+    if t_str == "Q4_K":
+        return NAME_TO_GGML_TYPE["Q4_K"], quantize_q4_k_bytes(np_arr)
     if t_str == "Q8_0":
         return NAME_TO_GGML_TYPE["Q8_0"], quantize_q8_0_bytes(np_arr)
     if t_str == "Q4_0":
@@ -626,8 +854,8 @@ def _decode_gguf_tensor_f32_from_handle(
 ) -> np.ndarray:
     """Slices and decodes a single tensor from an already-open GGUF binary handle `f`."""
     tname_type = t_info.ggml_type_name
-    if tname_type not in ("F32", "F16", "BF16", "Q8_0", "Q4_0"):
-        raise ValueError(f"Direct float slicing supports F32/F16/BF16/Q8_0/Q4_0, got {tname_type}")
+    if tname_type not in ("F32", "F16", "BF16", "Q8_0", "Q4_0", "Q4_K", "Q6_K"):
+        raise ValueError(f"Direct float slicing supports F32/F16/BF16/Q8_0/Q4_0/Q4_K/Q6_K, got {tname_type}")
     byte_len = ggml_tensor_byte_size(t_info.num_elements, tname_type, t_info.shape)
     f.seek(data_start + t_info.relative_offset)
     buf = _read_exact(f, byte_len)
@@ -639,7 +867,11 @@ def _decode_gguf_tensor_f32_from_handle(
         return _bf16_bytes_to_f32(buf, t_info.shape)
     if tname_type == "Q8_0":
         return dequantize_q8_0_bytes(buf, t_info.shape)
-    return dequantize_q4_0_bytes(buf, t_info.shape)
+    if tname_type == "Q4_0":
+        return dequantize_q4_0_bytes(buf, t_info.shape)
+    if tname_type == "Q4_K":
+        return dequantize_q4_k_bytes(buf, t_info.shape)
+    return dequantize_q6_k_bytes(buf, t_info.shape)
 
 
 def load_gguf_tensor_f32(path: str | Path, tensor_name: str) -> np.ndarray:

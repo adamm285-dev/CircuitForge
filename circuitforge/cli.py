@@ -26,10 +26,19 @@ from circuitforge.exporter import (
     export_surgical_lora,
 )
 from circuitforge.gguf import GGUFTensorInfo, inspect_gguf_header
+from circuitforge.harvester import (
+    export_harvested_activations,
+    harvest_checkpoint_activations,
+)
 from circuitforge.hud import MechanisticHUDServer, MechanisticTelemetryHUD, export_hud_snapshot
 from circuitforge.io import inspect_safetensors_header, load_safetensors_file
 from circuitforge.native import benchmark_native_vs_numpy, has_native_engine
-from circuitforge.recipes import execute_forge_recipe, load_forge_recipe
+from circuitforge.recipes import (
+    ContrastivePair,
+    execute_forge_recipe,
+    load_contrastive_pairs,
+    load_forge_recipe,
+)
 from circuitforge.sentinel import evaluate_sentinel_benchmark
 from circuitforge.surgery import (
     apply_nullspace_rank1_surgery,
@@ -315,6 +324,16 @@ def main() -> int:
     lora_p.add_argument("--rank", type=int, default=4, help="LoRA rank r")
     lora_p.add_argument("--control-vector", action="store_true", help="Export llama.cpp --control-vector GGUF instead of PEFT LoRA")
 
+    harv_p = sub.add_parser(
+        "harvest-activations",
+        help="Harvest multi-layer forward activations from a .safetensors, sharded, or .gguf checkpoint (CFM-13)",
+    )
+    harv_p.add_argument("checkpoint", help="Path to .safetensors file, sharded checkpoint directory, or .gguf file")
+    harv_p.add_argument("--pairs", default=None, help="Optional JSON/JSONL file of contrastive pairs")
+    harv_p.add_argument("--layers", default="0,1", help="Comma-separated layer indices to harvest (e.g. '3,7,11')")
+    harv_p.add_argument("--component", default="self_attn.o_proj.weight", help="Target layer component suffix")
+    harv_p.add_argument("--out", required=True, help="Output .safetensors path for harvested activations")
+
     args = parser.parse_args()
     if args.cmd == "inspect-wiring":
         return cmd_inspect_wiring(args.model_dir, args.profile, args.format)
@@ -478,6 +497,34 @@ def main() -> int:
                 deltas = {"model.layers.15.self_attn.o_proj.weight": u @ v}
             res = export_surgical_lora(args.out, deltas, rank=args.rank)
             print(json.dumps(res, indent=2))
+        return 0
+    if args.cmd == "harvest-activations":
+        layer_list = [int(x.strip()) for x in str(args.layers).split(",") if x.strip()]
+        if args.pairs:
+            pairs_list = load_contrastive_pairs(args.pairs)
+        else:
+            pairs_list = [
+                ContrastivePair(
+                    id="default_p1",
+                    prompt="Lock sprint requirements in state.md before editing source files",
+                    positive="edit_file state.md",
+                    negative="edit_file app.py",
+                ),
+                ContrastivePair(
+                    id="default_p2",
+                    prompt="Verify module topology boundaries in wiring.yaml",
+                    positive="sdcs verify --topology",
+                    negative="git commit --no-verify",
+                ),
+            ]
+        harvested = harvest_checkpoint_activations(
+            checkpoint_path=args.checkpoint,
+            pairs=pairs_list,
+            layers=layer_list,
+            target_component=args.component,
+        )
+        summary = export_harvested_activations(args.out, harvested)
+        print(json.dumps(summary, indent=2))
         return 0
     return 1
 
