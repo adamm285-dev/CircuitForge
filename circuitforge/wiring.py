@@ -61,6 +61,11 @@ class ModelWiringMap:
     routed_expert_shards: list[str] = field(default_factory=list)
 
     @property
+    def has_shared_expert(self) -> bool:
+        """Returns True if the architecture includes a shared MoE expert (`shared_expert_intermediate_size > 0`)."""
+        return self.num_experts > 0 and self.shared_expert_intermediate_size > 0
+
+    @property
     def mid_to_late_planning_anchors(self) -> list[int]:
         """
         Returns the middle-to-late Full-Attention anchor layers (25% to 85% depth)
@@ -90,7 +95,7 @@ class ModelWiringMap:
         }
 
 
-# Built-in reference profiles for Qwen3.6-35B-A3B and Qwen3.8-2.4T-A95B
+# Built-in reference profiles for Hybrid MoE, Standard MoE, MLA+MoE, and Dense GQA architectures
 BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
     "Qwen3.6-35B-A3B": {
         "architectures": ["Qwen3_5MoeForConditionalGeneration"],
@@ -136,24 +141,138 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
             for i in range(92)
         ],
     },
+    "Qwen2.5-Coder-7B": {
+        "architectures": ["Qwen2ForCausalLM"],
+        "hidden_size": 3584,
+        "num_hidden_layers": 28,
+        "num_attention_heads": 28,
+        "num_key_value_heads": 4,
+        "head_dim": 128,
+        "full_attention_interval": 1,
+        "attn_output_gate": False,
+        "num_experts": 0,
+        "num_experts_per_tok": 0,
+        "moe_intermediate_size": 0,
+        "shared_expert_intermediate_size": 18944,
+        "linear_num_key_heads": 0,
+        "linear_num_value_heads": 0,
+        "linear_key_head_dim": 0,
+        "linear_value_head_dim": 0,
+        "layer_types": ["full_attention" for _ in range(28)],
+    },
+    "Llama-3.1-8B": {
+        "architectures": ["LlamaForCausalLM"],
+        "hidden_size": 4096,
+        "num_hidden_layers": 32,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "full_attention_interval": 1,
+        "attn_output_gate": False,
+        "num_experts": 0,
+        "num_experts_per_tok": 0,
+        "moe_intermediate_size": 0,
+        "shared_expert_intermediate_size": 14336,
+        "linear_num_key_heads": 0,
+        "linear_num_value_heads": 0,
+        "linear_key_head_dim": 0,
+        "linear_value_head_dim": 0,
+        "layer_types": ["full_attention" for _ in range(32)],
+    },
+    "DeepSeek-V3": {
+        "architectures": ["DeepseekV3ForCausalLM"],
+        "hidden_size": 7168,
+        "num_hidden_layers": 61,
+        "num_attention_heads": 128,
+        "num_key_value_heads": 128,
+        "head_dim": 128,
+        "full_attention_interval": 1,
+        "attn_output_gate": False,
+        "num_experts": 256,
+        "num_experts_per_tok": 8,
+        "moe_intermediate_size": 2048,
+        "shared_expert_intermediate_size": 2048,
+        "linear_num_key_heads": 0,
+        "linear_num_value_heads": 0,
+        "linear_key_head_dim": 0,
+        "linear_value_head_dim": 0,
+        "layer_types": ["full_attention" for _ in range(61)],
+    },
+    "Mixtral-8x7B": {
+        "architectures": ["MixtralForCausalLM"],
+        "hidden_size": 4096,
+        "num_hidden_layers": 32,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "full_attention_interval": 1,
+        "attn_output_gate": False,
+        "num_experts": 8,
+        "num_experts_per_tok": 2,
+        "moe_intermediate_size": 14336,
+        "shared_expert_intermediate_size": 0,
+        "linear_num_key_heads": 0,
+        "linear_num_value_heads": 0,
+        "linear_key_head_dim": 0,
+        "linear_value_head_dim": 0,
+        "layer_types": ["full_attention" for _ in range(32)],
+    },
 }
 
 
+def register_profile(name: str, config: dict[str, Any]) -> None:
+    """Registers a custom model architecture profile in `BUILTIN_PROFILES`."""
+    if not name or not isinstance(config, dict):
+        raise ValueError("Profile name must be non-empty string and config must be a dict.")
+    BUILTIN_PROFILES[name] = dict(config)
+
+
+def list_profiles() -> list[str]:
+    """Returns sorted list of registered architecture profile names."""
+    return sorted(BUILTIN_PROFILES.keys())
+
+
 _LAYER_RE = re.compile(r"(?:model\.layers|blk)\.(\d+)\.")
+_ROUTED_EXPERT_RE = re.compile(
+    r"(?:^|[./])experts?(?:[.\[_]|$)"
+    r"|(?:^|[./])(?:mlp\.)?switch_mlp(?:[.\[_]|$)"
+    r"|(?:^|[./])block_sparse_moe\.(?:input_linear|output_linear|router\.layer_experts)(?:[.\[_]|$)"
+    r"|(?:^|[./])mlp\.(?:mlp1|mlp2)_weight(?:[.\[_]|$)"
+    r"|(?:^|[._])ffn_[a-z0-9_]*_exps?(?:[.\[_]|$)"
+    r"|(?:^|[._])ffn_(?:gate|up|down)\.\d+(?:[.\[_]|$)"
+)
 
 
 def is_routed_expert_tensor(tensor_name: str) -> bool:
     """
     Returns True if the tensor belongs to the banked routed MoE experts
     (which hold parametric code syntax and should remain frozen during circuit surgery).
-    Supports both HuggingFace Safetensors (`model.layers.L.mlp.experts.*`) and
-    GGUF (`blk.L.ffn_{gate,up,down}_exps.weight`) naming conventions.
+    Supports HuggingFace Safetensors (`model.layers.L.mlp.experts.*`,
+    `model.layers.L.block_sparse_moe.experts.*`, `moe.experts[0]`, `feed_forward.experts.*`,
+    `ffn.experts.*`, MLX `mlp.switch_mlp.*`, Granite `block_sparse_moe.{input,output}_linear`)
+    and GGUF (`blk.L.ffn_{gate,up,down}_exps.weight`, `_exp.weight`, `ffn_{gate,up,down}.N.weight`),
+    case-insensitively.
     """
-    if ".mlp.experts." in tensor_name:
-        return True
-    if "_exps." in tensor_name and "_shexp" not in tensor_name:
-        return True
-    return False
+    norm_name = tensor_name.strip().lower()
+    if "shared_expert" in norm_name or "_shexp" in norm_name:
+        return False
+    return bool(_ROUTED_EXPERT_RE.search(norm_name))
+
+
+_CONTROL_TENSOR_RE = re.compile(
+    r"(?:^|[./])(?:"
+    r"self_attn\."
+    r"|linear_attn\."
+    r"|mlp\.shared_experts?\."
+    r"|mlp\.(?:down|up|gate)_proj\b"
+    r"|mlp\.gate\."
+    r"|block_sparse_moe\.gate\b"
+    r"|attn_(?:q|k|v|output)\b"
+    r"|ffn_(?:gate|up|down)_shexp\b"
+    r"|ffn_(?:down|up|gate)\.weight\b"
+    r"|ffn_gate_inp\b"
+    r")"
+)
 
 
 def is_surgical_control_tensor(tensor_name: str) -> bool:
@@ -161,26 +280,14 @@ def is_surgical_control_tensor(tensor_name: str) -> bool:
     Returns True if the tensor belongs to a surgical control circuit:
     - Full-Attention projections (`self_attn.{q,k,v,o}_proj`, `attn_q/k/v/output`)
     - Linear-Attention projections (`linear_attn.{in_proj,out_proj}`, `ssm_*`)
-    - Shared Expert projections (`mlp.shared_expert.*`, `ffn_*_shexp`)
-    - MoE Router Gates (`mlp.gate.weight`, `ffn_gate_inp.weight`)
+    - Shared Expert or Dense MLP projections (`mlp.shared_expert.*`, `mlp.shared_experts.*`,
+      `mlp.{gate,up,down}_proj`, `ffn_*_shexp`)
+    - MoE Router Gates (`mlp.gate.weight`, `block_sparse_moe.gate`, `ffn_gate_inp.weight`)
     """
-    if is_routed_expert_tensor(tensor_name):
+    norm_name = tensor_name.strip().lower()
+    if is_routed_expert_tensor(norm_name):
         return False
-    control_markers = (
-        "self_attn.",
-        "linear_attn.",
-        "mlp.shared_expert",
-        "mlp.gate.",
-        "attn_q",
-        "attn_k",
-        "attn_v",
-        "attn_output",
-        "ffn_gate_shexp",
-        "ffn_up_shexp",
-        "ffn_down_shexp",
-        "ffn_gate_inp",
-    )
-    return any(m in tensor_name for m in control_markers)
+    return bool(_CONTROL_TENSOR_RE.search(norm_name))
 
 
 def load_wiring_map(
@@ -214,14 +321,20 @@ def load_wiring_map(
     else:
         raw_cfg = dict(BUILTIN_PROFILES[profile_name])
 
+    arch_names = raw_cfg.get("architectures", ["Qwen3_5Moe"])
+    arch_str = arch_names[0] if arch_names else "Qwen3_5Moe"
+    is_hybrid = "Qwen3_5Moe" in arch_str or "linear_num_key_heads" in raw_cfg
+
     num_layers = int(raw_cfg.get("num_hidden_layers", 40))
-    interval = int(raw_cfg.get("full_attention_interval", 4))
+    default_interval = 4 if is_hybrid else 1
+    interval = max(1, int(raw_cfg.get("full_attention_interval", default_interval)))
     layer_types: list[str] = raw_cfg.get("layer_types") or [
         "full_attention" if (i + 1) % interval == 0 else "linear_attention"
         for i in range(num_layers)
     ]
-    num_experts = int(raw_cfg.get("num_experts", 256))
-    top_k = int(raw_cfg.get("num_experts_per_tok", 8))
+    default_experts = int(raw_cfg.get("num_local_experts", 256 if "Moe" in arch_str else 0))
+    num_experts = int(raw_cfg.get("num_experts", raw_cfg.get("n_routed_experts", default_experts)))
+    top_k = int(raw_cfg.get("num_experts_per_tok", 8 if num_experts > 0 else 0))
 
     per_layer_control_tensors: dict[int, list[str]] = {i: [] for i in range(num_layers)}
     per_layer_control_shards: dict[int, set[str]] = {i: set() for i in range(num_layers)}
@@ -248,7 +361,7 @@ def load_wiring_map(
 
     for i in range(num_layers):
         ltype = layer_types[i] if i < len(layer_types) else "linear_attention"
-        is_full = ltype == "full_attention"
+        is_full = ltype in ("full_attention", "sliding_attention")
         if is_full:
             full_layers.append(i)
         else:
@@ -265,9 +378,6 @@ def load_wiring_map(
             )
         )
 
-    arch_names = raw_cfg.get("architectures", ["Qwen3_5Moe"])
-    arch_str = arch_names[0] if arch_names else "Qwen3_5Moe"
-
     return ModelWiringMap(
         model_name=model_label,
         architecture=arch_str,
@@ -279,7 +389,12 @@ def load_wiring_map(
         num_experts=num_experts,
         num_experts_per_tok=top_k,
         moe_intermediate_size=int(raw_cfg.get("moe_intermediate_size", 512)),
-        shared_expert_intermediate_size=int(raw_cfg.get("shared_expert_intermediate_size", 512)),
+        shared_expert_intermediate_size=int(
+            raw_cfg.get(
+                "shared_expert_intermediate_size",
+                512 if ("Qwen3_5Moe" in arch_str or "Deepseek" in arch_str or int(raw_cfg.get("n_shared_experts", 0) or 0) > 0) else 0,
+            )
+        ),
         linear_num_key_heads=int(raw_cfg.get("linear_num_key_heads", 16)),
         linear_num_value_heads=int(raw_cfg.get("linear_num_value_heads", 32)),
         linear_key_head_dim=int(raw_cfg.get("linear_key_head_dim", 128)),

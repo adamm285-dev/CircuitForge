@@ -16,12 +16,26 @@ from pathlib import Path
 import numpy as np
 
 from circuitforge.autograd import Tensor, causal_self_attention, rms_norm
+from circuitforge.compiler import evaluate_compiler_benchmark
+from circuitforge.engram import evaluate_engram_and_manifold_benchmark
+from circuitforge.exporter import export_forged_bundle, export_model_card
+from circuitforge.gguf import GGUFTensorInfo, inspect_gguf_header
+from circuitforge.hud import MechanisticHUDServer, MechanisticTelemetryHUD, export_hud_snapshot
+from circuitforge.io import inspect_safetensors_header
+from circuitforge.native import benchmark_native_vs_numpy, has_native_engine
+from circuitforge.recipes import execute_forge_recipe, load_forge_recipe
+from circuitforge.sentinel import evaluate_sentinel_benchmark
 from circuitforge.surgery import (
     apply_nullspace_rank1_surgery,
     build_surgical_plan,
     compute_contrastive_direction,
 )
-from circuitforge.wiring import BUILTIN_PROFILES, load_wiring_map
+from circuitforge.wiring import (
+    BUILTIN_PROFILES,
+    is_routed_expert_tensor,
+    is_surgical_control_tensor,
+    load_wiring_map,
+)
 
 
 def cmd_inspect_wiring(model_dir: str | None, profile: str, fmt: str) -> int:
@@ -132,6 +146,43 @@ def cmd_verify_surgery(seed: int = 42) -> int:
     return 0 if result["verified"] else 1
 
 
+def cmd_inspect_checkpoint(path: str) -> int:
+    entries, metadata, data_start = inspect_safetensors_header(path)
+    control_count = sum(1 for k in entries if is_surgical_control_tensor(k))
+    expert_count = sum(1 for k in entries if is_routed_expert_tensor(k))
+    payload = {
+        "file": str(Path(path).name),
+        "tensor_count": len(entries),
+        "control_tensor_count": control_count,
+        "routed_expert_tensor_count": expert_count,
+        "data_start_offset": data_start,
+        "metadata": metadata,
+        "tensors": {
+            k: {"dtype": v.dtype, "shape": list(v.shape), "bytes": v.byte_length}
+            for k, v in entries.items()
+        },
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_run_recipe(
+    recipe_path: str,
+    checkpoint_path: str | None,
+    output_path: str | None,
+) -> int:
+    rpath = Path(recipe_path).resolve()
+    recipe = load_forge_recipe(rpath)
+    result = execute_forge_recipe(
+        recipe=recipe,
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+        base_dir=rpath.parent,
+    )
+    print(json.dumps(result, indent=2))
+    return 0 if result["max_nullspace_leakage"] < 1e-6 else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="circuitforge",
@@ -164,6 +215,76 @@ def main() -> int:
     ver_p = sub.add_parser("verify-surgery", help="Run mathematical verification of null-space rank-1 weight surgery")
     ver_p.add_argument("--seed", type=int, default=42, help="Random seed")
 
+    ckpt_p = sub.add_parser("inspect-checkpoint", help="Inspect a .safetensors checkpoint header without loading weights")
+    ckpt_p.add_argument("path", help="Path to .safetensors file")
+
+    rec_p = sub.add_parser("run-recipe", help="Execute a declarative .forge.json weight surgery recipe")
+    rec_p.add_argument("recipe", help="Path to .forge.json recipe file")
+    rec_p.add_argument("--checkpoint", default=None, help="Optional input .safetensors file")
+    rec_p.add_argument("--out", default=None, help="Optional output .safetensors file")
+
+    bench_p = sub.add_parser("benchmark-engine", help="Run C++ SIMD vs NumPy rank-1 surgery microbenchmark")
+    bench_p.add_argument("--dim", type=int, default=512, help="Square matrix dimension")
+    bench_p.add_argument("--iters", type=int, default=50, help="Benchmark iterations")
+
+    hud_exp = sub.add_parser("export-hud", help="Export a standalone interactive HTML Mechanistic Telemetry HUD")
+    hud_exp.add_argument("--out", default="circuitforge_hud.html", help="Output HTML file path")
+    hud_exp.add_argument(
+        "--profile",
+        default="Qwen3.6-35B-A3B",
+        choices=sorted(BUILTIN_PROFILES.keys()),
+        help="Model architecture profile",
+    )
+    hud_exp.add_argument("--alpha", type=float, default=1.8, help="Initial steering multiplier alpha")
+    hud_exp.add_argument("--schedule", default="bell", choices=["bell", "uniform"], help="Layer distribution schedule")
+
+    hud_srv = sub.add_parser("serve-hud", help="Launch live interactive Mechanistic Telemetry HUD web server")
+    hud_srv.add_argument("--host", default="127.0.0.1", help="Bind host")
+    hud_srv.add_argument("--port", type=int, default=8765, help="Bind port")
+    hud_srv.add_argument(
+        "--profile",
+        default="Qwen3.6-35B-A3B",
+        choices=sorted(BUILTIN_PROFILES.keys()),
+        help="Model architecture profile",
+    )
+
+    sent_p = sub.add_parser(
+        "verify-sentinel",
+        help="Evaluate MoE Anomaly Router & Spike Sentinel (100% interception, 0% false positive)",
+    )
+    sent_p.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    eng_p = sub.add_parser(
+        "verify-engram",
+        help="Evaluate Discrete Engram Memory Graph & Weight-Space Parametric Manifold (CFM-06)",
+    )
+    eng_p.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    comp_p = sub.add_parser(
+        "verify-compiler",
+        help="Evaluate Tracr/RASP-Style Symbolic-to-Weight Micro-Circuit Compiler (CFM-07)",
+    )
+
+    gguf_p = sub.add_parser(
+        "inspect-gguf",
+        help="Inspect a .gguf v2/v3 checkpoint header and tensor descriptors without loading weights (CFM-08)",
+    )
+    gguf_p.add_argument("path", help="Path to .gguf file")
+
+    card_p = sub.add_parser(
+        "export-card",
+        help="Export a Hugging Face Model Card or complete Forged Checkpoint Bundle (CFM-08)",
+    )
+    card_p.add_argument("--out", default="README_MODEL_CARD.md", help="Output Markdown path or bundle directory")
+    card_p.add_argument("--model-id", default="Qwen3.6-35B-A3B-CircuitForged", help="Model repository name")
+    card_p.add_argument(
+        "--profile",
+        default="Qwen3.6-35B-A3B",
+        choices=sorted(BUILTIN_PROFILES.keys()),
+        help="Base model architecture profile",
+    )
+    card_p.add_argument("--bundle", action="store_true", help="Export full bundle (.safetensors, .gguf, recipe, README.md)")
+
     args = parser.parse_args()
     if args.cmd == "inspect-wiring":
         return cmd_inspect_wiring(args.model_dir, args.profile, args.format)
@@ -177,6 +298,92 @@ def main() -> int:
         )
     if args.cmd == "verify-surgery":
         return cmd_verify_surgery(seed=args.seed)
+    if args.cmd == "inspect-checkpoint":
+        return cmd_inspect_checkpoint(args.path)
+    if args.cmd == "run-recipe":
+        return cmd_run_recipe(args.recipe, args.checkpoint, args.out)
+    if args.cmd == "benchmark-engine":
+        res = benchmark_native_vs_numpy(dim=args.dim, iterations=args.iters)
+        res["native_engine_loaded"] = has_native_engine()
+        print(json.dumps(res, indent=2))
+        return 0 if res["meets_50us_target"] else 1
+    if args.cmd == "export-hud":
+        out_p, state = export_hud_snapshot(
+            output_html_path=args.out,
+            profile_name=args.profile,
+            alpha=args.alpha,
+            schedule=args.schedule,
+        )
+        print(
+            json.dumps(
+                {
+                    "hud_html_path": str(out_p),
+                    "profile": state["profile"]["model_name"],
+                    "alpha": state["controls"]["global_alpha"],
+                    "schedule": state["controls"]["schedule"],
+                    "ring_buffer_events_count": state["ring_buffer_events_count"],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    if args.cmd == "serve-hud":
+        hud = MechanisticTelemetryHUD(profile_name=args.profile)
+        srv = MechanisticHUDServer(hud, host=args.host, port=args.port)
+        url = srv.start_background()
+        print(f"CircuitForge Mechanistic Telemetry HUD listening on: {url}")
+        try:
+            while True:
+                import time as _t
+                _t.sleep(1.0)
+        except KeyboardInterrupt:
+            srv.stop()
+            hud.close()
+        return 0
+    if args.cmd == "verify-sentinel":
+        res = evaluate_sentinel_benchmark(seed=args.seed)
+        print(json.dumps(res, indent=2))
+        return 0 if res["verified"] else 1
+    if args.cmd == "verify-engram":
+        res = evaluate_engram_and_manifold_benchmark(seed=args.seed)
+        print(json.dumps(res, indent=2))
+        return 0 if res["verified"] else 1
+    if args.cmd == "verify-compiler":
+        res = evaluate_compiler_benchmark()
+        print(json.dumps(res, indent=2))
+        return 0 if res["verified"] else 1
+    if args.cmd == "inspect-gguf":
+        info = inspect_gguf_header(args.path)
+        tensors_map: dict[str, GGUFTensorInfo] = info["tensors"]  # type: ignore[assignment]
+        serializable = dict(info)
+        serializable["tensors"] = {
+            k: {
+                "shape": list(v.shape),
+                "ggml_type": v.ggml_type_name,
+                "relative_offset": v.relative_offset,
+                "is_control_tensor": v.is_control_tensor,
+                "is_routed_expert": v.is_routed_expert,
+            }
+            for k, v in tensors_map.items()
+        }
+        print(json.dumps(serializable, indent=2))
+        return 0
+    if args.cmd == "export-card":
+        if args.bundle:
+            res = export_forged_bundle(
+                output_dir=args.out,
+                model_id=args.model_id,
+                base_profile=args.profile,
+            )
+            print(json.dumps(res, indent=2))
+        else:
+            out_md = export_model_card(
+                output_md_path=args.out,
+                model_id=args.model_id,
+                base_profile=args.profile,
+            )
+            print(json.dumps({"model_card_path": str(out_md), "model_id": args.model_id}, indent=2))
+        return 0
     return 1
 
 

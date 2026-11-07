@@ -9,6 +9,14 @@ build/
 .venv/
 venv/
 
+# Native C/C++ build artifacts
+*.obj
+*.exp
+*.lib
+*.pdb
+*.ilk
+test_engine.exe
+
 # Model weights, checkpoints, and steering vectors
 models/
 *.gguf
@@ -19,7 +27,7 @@ models/
 *.trit
 *.kld
 
-# Local private workspace & internal experiments
+# Local private workspace & internal experiments (keep SDCS scaffolding local-only, out of GitHub)
 private_*/
 experiments/
 *sdcs*
@@ -28,10 +36,18 @@ experiments/
 *CFV3*
 *cacheforge*
 *CacheForge*
+.githooks/
+AGENTS.md
+MOCKS.md
+spine.md
+wiring.yaml
 state.md
 app_map.md
 evals.md
 roadmap.md
+decisions.md
+sessions/
+tests/fixtures/init.txt
 WEIGHT_SURGERY_SPEC.md
 .env
 *.local.*
