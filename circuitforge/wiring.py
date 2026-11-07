@@ -254,9 +254,9 @@ def is_routed_expert_tensor(tensor_name: str) -> bool:
     case-insensitively.
     """
     norm_name = tensor_name.strip().lower()
-    if "shared_expert" in norm_name or "_shexp" in norm_name:
-        return False
-    return bool(_ROUTED_EXPERT_RE.search(norm_name))
+    if _ROUTED_EXPERT_RE.search(norm_name):
+        return True
+    return False
 
 
 _CONTROL_TENSOR_RE = re.compile(

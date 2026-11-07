@@ -87,6 +87,7 @@ def inspect_safetensors_header(
     entries: dict[str, SafetensorEntry] = {}
     data_start = 8 + header_len
 
+    intervals: list[tuple[int, int, str]] = []
     for k, val in raw_obj.items():
         if k == "__metadata__":
             if isinstance(val, dict):
@@ -99,12 +100,29 @@ def inspect_safetensors_header(
                 f"Invalid or out-of-bounds safetensors data_offsets {[s_off, e_off]} "
                 f"(file_size={file_size}, data_start={data_start}) for tensor '{k}' in {p}"
             )
+        raw_shape = tuple(int(dim) for dim in val["shape"])
+        if any(dim < 0 for dim in raw_shape):
+            raise ValueError(
+                f"Invalid negative dimension in shape {raw_shape} for tensor '{k}' in {p}"
+            )
+        st_dtype = str(val["dtype"])
+        intervals.append((s_off, e_off, k))
         entries[k] = SafetensorEntry(
             name=k,
-            dtype=str(val["dtype"]),
-            shape=tuple(int(dim) for dim in val["shape"]),
+            dtype=st_dtype,
+            shape=raw_shape,
             data_offsets=(s_off, e_off),
         )
+
+    intervals.sort(key=lambda x: (x[0], x[1]))
+    for idx in range(1, len(intervals)):
+        prev_s, prev_e, prev_k = intervals[idx - 1]
+        curr_s, curr_e, curr_k = intervals[idx]
+        if curr_s < prev_e:
+            raise ValueError(
+                f"Overlapping safetensors data_offsets detected between '{prev_k}' ({[prev_s, prev_e]}) "
+                f"and '{curr_k}' ({[curr_s, curr_e]}) in {p}"
+            )
 
     return entries, metadata, data_start
 
@@ -154,12 +172,22 @@ def load_safetensor_slice(path: str | Path, tensor_name: str) -> np.ndarray:
             raise ValueError(f"Truncated safetensors payload for '{tensor_name}' in {path}: expected {nbytes}, got {len(raw)}")
 
     if entry.dtype == "BF16":
+        expected_bytes = int(np.prod(entry.shape)) * 2 if entry.shape else 2
+        if nbytes != expected_bytes:
+            raise ValueError(
+                f"Safetensors byte_length mismatch for '{tensor_name}': expected {expected_bytes}, got {nbytes}"
+            )
         return _bf16_bytes_to_f32(raw, entry.shape)
 
     if entry.dtype not in _DTYPE_TO_NUMPY:
         raise ValueError(f"Unsupported safetensors dtype: {entry.dtype}")
 
     np_dtype = _DTYPE_TO_NUMPY[entry.dtype]
+    expected_bytes = (int(np.prod(entry.shape)) if entry.shape else 1) * np_dtype.itemsize
+    if nbytes != expected_bytes:
+        raise ValueError(
+            f"Safetensors byte_length mismatch for '{tensor_name}': expected {expected_bytes}, got {nbytes}"
+        )
     return np.frombuffer(raw, dtype=np_dtype).reshape(entry.shape).copy()
 
 
@@ -227,11 +255,13 @@ def save_safetensors_file(
     pad_len = (8 - (len(header_json) % 8)) % 8
     header_padded = header_json + (b" " * pad_len)
 
-    with out_path.open("wb") as f:
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp_path.open("wb") as f:
         f.write(struct.pack("<Q", len(header_padded)))
         f.write(header_padded)
         for buf in encoded_buffers:
             f.write(buf)
+    tmp_path.replace(out_path)
 
     return out_path
 
@@ -314,7 +344,7 @@ def stream_surgical_safetensors_update(
     pad_len = (8 - (len(header_json) % 8)) % 8
     header_padded = header_json + (b" " * pad_len)
 
-    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp") if in_path.resolve() == out_path.resolve() else out_path
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     with in_path.open("rb") as fin, tmp_path.open("wb") as fout:
         fout.write(struct.pack("<Q", len(header_padded)))
         fout.write(header_padded)
@@ -332,8 +362,7 @@ def stream_surgical_safetensors_update(
                     fout.write(chunk)
                     rem -= len(chunk)
 
-    if tmp_path != out_path:
-        tmp_path.replace(out_path)
+    tmp_path.replace(out_path)
     return updated_names
 
 
@@ -424,7 +453,8 @@ def apply_sharded_checkpoint_surgery(
             updated_tensors.extend(edited)
         else:
             untouched_shards.append(shard_name)
-            if in_shard.resolve() != out_shard.resolve():
+            same_inode = out_shard.exists() and os.path.samefile(in_shard, out_shard)
+            if not same_inode:
                 if out_shard.exists():
                     out_shard.unlink()
                 if link_untouched_shards:

@@ -324,10 +324,10 @@ def compile_constraint_gate(
         if cursor >= d_hidden:
             raise ValueError(f"Compiled neuron count exceeds d_hidden ({d_hidden})")
         gate_idx = label_to_idx[rule.target_gate]
-        # Exponential priority scaling so multiple lower-priority rules on the same gate
-        # never sum to beat a higher-priority rule on another gate in pure linear W_mlp2 @ h1!
+        # Exponential priority scaling (base 16) so multiple lower-priority rules or any_of sub-clauses
+        # on the same gate never sum to beat a higher-priority rule on another gate in linear W_mlp2 @ h1!
         p_clamped = max(-5.0, min(float(rule.priority), 15.0))
-        w_out = float(6.0 * (4.0 ** (p_clamped - 1.0)))
+        w_out = float(6.0 * (16.0 ** (p_clamped - 1.0)))
 
         if rule.min_token_count > 0 and not rule.any_of_tokens and not rule.all_of_tokens:
             # Pure token-budget threshold neuron: fires (= 1.0) when seq_len >= min_token_count,

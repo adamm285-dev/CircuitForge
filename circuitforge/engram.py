@@ -271,7 +271,9 @@ class ParametricAdapterManifold:
         self._mean_adapter = np.mean(mat, axis=0)
         centered = mat - self._mean_adapter
         _, s, vt = np.linalg.svd(centered, full_matrices=False)
-        k = min(max_components, vt.shape[0])
+        s_tol = max(1e-12, float(s[0]) * 1e-7) if len(s) > 0 else 1e-12
+        valid_rank = max(int(np.sum(s > s_tol)), 1)
+        k = min(max_components, valid_rank, vt.shape[0])
         self._basis_vectors = vt[:k, :]
         total_var = float(np.sum(s ** 2))
         explained = float(np.sum(s[:k] ** 2) / total_var) if total_var > 1e-12 else 1.0

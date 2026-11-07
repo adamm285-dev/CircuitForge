@@ -582,12 +582,16 @@ def native_rmsnorm_matvec_f32(
     """
     if _DLL is None:
         raise RuntimeError("Native C++ engine DLL is not loaded.")
+    if not math.isfinite(float(eps)) or float(eps) <= 0.0:
+        raise ValueError(f"eps must be a finite positive float, got {eps}")
     W = np.ascontiguousarray(weight, dtype=np.float32)
     if W.ndim != 2:
         raise ValueError(f"Expected 2D weight matrix, got {W.shape}")
     d_out, d_in = W.shape
     x_arr = np.ascontiguousarray(x, dtype=np.float32).reshape(d_in)
     g_arr = np.ascontiguousarray(gamma, dtype=np.float32).reshape(d_in)
+    if not np.all(np.isfinite(W)) or not np.all(np.isfinite(x_arr)) or not np.all(np.isfinite(g_arr)):
+        raise ValueError("weight, x, and gamma must be finite (non-NaN, non-Inf).")
     out = np.zeros(d_out, dtype=np.float32)
 
     _DLL.cf_rmsnorm_matvec_f32(
@@ -609,6 +613,8 @@ def native_router_entropy_f32(logits: np.ndarray) -> tuple[float, int, float]:
     if _DLL is None:
         raise RuntimeError("Native C++ engine DLL is not loaded.")
     arr = np.ascontiguousarray(logits, dtype=np.float32).reshape(-1)
+    if arr.size == 0 or not np.all(np.isfinite(arr)):
+        raise ValueError("router logits must be non-empty and finite (non-NaN, non-Inf).")
     top_id = ctypes.c_uint32(0)
     top_prob = ctypes.c_float(0.0)
     ent = float(

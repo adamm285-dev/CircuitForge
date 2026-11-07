@@ -60,6 +60,9 @@ GGML_TYPE_NAMES: dict[int, str] = {
     28: "F64",
     29: "IQ1_M",
     30: "BF16",
+    34: "TQ1_0",
+    35: "TQ2_0",
+    39: "MXFP4",
 }
 
 # Exact (block_elements, block_bytes) for standard ggml types
@@ -93,6 +96,9 @@ GGML_BLOCK_SPEC: dict[str, tuple[int, int]] = {
     "IQ2_S": (256, 82),
     "IQ4_XS": (256, 136),
     "IQ1_M": (256, 56),
+    "TQ1_0": (256, 54),
+    "TQ2_0": (256, 66),
+    "MXFP4": (32, 17),
 }
 
 NAME_TO_GGML_TYPE: dict[str, int] = {v: k for k, v in GGML_TYPE_NAMES.items()}
@@ -155,39 +161,48 @@ def _write_gguf_string(f: BinaryIO, s: str) -> None:
     f.write(raw)
 
 
-def _read_gguf_value(f: BinaryIO, val_type: int, _depth: int = 0) -> object:
+def _read_gguf_value_with_elem_type(
+    f: BinaryIO,
+    val_type: int,
+    _depth: int = 0,
+) -> tuple[object, int | None]:
     if _depth > 8:
         raise ValueError("GGUF nested array depth exceeds safety limit (8)")
     if val_type == GGUF_VAL_UINT8:
-        return struct.unpack("<B", _read_exact(f, 1))[0]
+        return struct.unpack("<B", _read_exact(f, 1))[0], None
     if val_type == GGUF_VAL_INT8:
-        return struct.unpack("<b", _read_exact(f, 1))[0]
+        return struct.unpack("<b", _read_exact(f, 1))[0], None
     if val_type == GGUF_VAL_UINT16:
-        return struct.unpack("<H", _read_exact(f, 2))[0]
+        return struct.unpack("<H", _read_exact(f, 2))[0], None
     if val_type == GGUF_VAL_INT16:
-        return struct.unpack("<h", _read_exact(f, 2))[0]
+        return struct.unpack("<h", _read_exact(f, 2))[0], None
     if val_type == GGUF_VAL_UINT32:
-        return struct.unpack("<I", _read_exact(f, 4))[0]
+        return struct.unpack("<I", _read_exact(f, 4))[0], None
     if val_type == GGUF_VAL_INT32:
-        return struct.unpack("<i", _read_exact(f, 4))[0]
+        return struct.unpack("<i", _read_exact(f, 4))[0], None
     if val_type == GGUF_VAL_FLOAT32:
-        return float(struct.unpack("<f", _read_exact(f, 4))[0])
+        return float(struct.unpack("<f", _read_exact(f, 4))[0]), None
     if val_type == GGUF_VAL_BOOL:
-        return bool(struct.unpack("<?", _read_exact(f, 1))[0])
+        return bool(struct.unpack("<?", _read_exact(f, 1))[0]), None
     if val_type == GGUF_VAL_STRING:
-        return _read_gguf_string(f)
+        return _read_gguf_string(f), None
     if val_type == GGUF_VAL_UINT64:
-        return struct.unpack("<Q", _read_exact(f, 8))[0]
+        return struct.unpack("<Q", _read_exact(f, 8))[0], None
     if val_type == GGUF_VAL_INT64:
-        return struct.unpack("<q", _read_exact(f, 8))[0]
+        return struct.unpack("<q", _read_exact(f, 8))[0], None
     if val_type == GGUF_VAL_FLOAT64:
-        return float(struct.unpack("<d", _read_exact(f, 8))[0])
+        return float(struct.unpack("<d", _read_exact(f, 8))[0]), None
     if val_type == GGUF_VAL_ARRAY:
         elem_type, count = struct.unpack("<IQ", _read_exact(f, 12))
         if count > 1_000_000:
             raise ValueError(f"GGUF metadata array count {count} exceeds 1,000,000 safety limit")
-        return [_read_gguf_value(f, elem_type, _depth + 1) for _ in range(count)]
+        items = [_read_gguf_value_with_elem_type(f, elem_type, _depth + 1)[0] for _ in range(count)]
+        return items, int(elem_type)
     raise ValueError(f"Unsupported GGUF metadata value type ID: {val_type}")
+
+
+def _read_gguf_value(f: BinaryIO, val_type: int, _depth: int = 0) -> object:
+    return _read_gguf_value_with_elem_type(f, val_type, _depth)[0]
 
 
 def _align_offset(pos: int, alignment: int = GGUF_DEFAULT_ALIGNMENT) -> int:
@@ -240,6 +255,8 @@ def quantize_q8_0_bytes(arr: np.ndarray) -> bytes:
     blocks = flat.reshape(n_blocks, 32)
     abs_max = np.max(np.abs(blocks), axis=1)  # (n_blocks,)
     d_f16 = (abs_max / 127.0).astype(np.float16)
+    if not np.all(np.isfinite(d_f16)):
+        raise ValueError("Q8_0 block scale overflowed float16 range.")
     d_f32 = d_f16.astype(np.float32)[:, None]
     inv_d = np.where(d_f32 > 0.0, 1.0 / np.maximum(d_f32, 1e-30), 0.0)
     qs = np.clip(np.round(blocks * inv_d), -127, 127).astype(np.int8)
@@ -298,6 +315,8 @@ def quantize_q4_0_bytes(arr: np.ndarray) -> bytes:
     # In [-8, 7] grid, -min_vals/8 and max_vals/7 determine the required positive scale d
     d_req = np.maximum(-min_vals / 8.0, max_vals / 7.0)
     d_f16 = d_req.astype(np.float16)
+    if not np.all(np.isfinite(d_f16)):
+        raise ValueError("Q4_0 block scale overflowed float16 range.")
     d_f32 = d_f16.astype(np.float32)[:, None]
     inv_d = np.where(d_f32 > 0.0, 1.0 / np.maximum(d_f32, 1e-30), 0.0)
     # Signed integer quants in [-8, 7], shifted by +8 into unsigned nibble [0, 15]
@@ -356,11 +375,15 @@ def inspect_gguf_header(path: str | Path) -> dict[str, object]:
 
         metadata: dict[str, object] = {}
         metadata_types: dict[str, int] = {}
+        metadata_array_elem_types: dict[str, int] = {}
         for _ in range(kv_count):
             key = _read_gguf_string(f)
             (val_type,) = struct.unpack("<I", _read_exact(f, 4))
             metadata_types[key] = val_type
-            metadata[key] = _read_gguf_value(f, val_type)
+            val_obj, arr_elem_type = _read_gguf_value_with_elem_type(f, val_type)
+            metadata[key] = val_obj
+            if arr_elem_type is not None:
+                metadata_array_elem_types[key] = arr_elem_type
 
         raw_align = metadata.get("general.alignment", GGUF_DEFAULT_ALIGNMENT)
         alignment = int(raw_align) if isinstance(raw_align, (int, float)) else GGUF_DEFAULT_ALIGNMENT
@@ -413,6 +436,7 @@ def inspect_gguf_header(path: str | Path) -> dict[str, object]:
         "routed_expert_tensor_count": expert_count,
         "metadata": metadata,
         "metadata_types": metadata_types,
+        "metadata_array_elem_types": metadata_array_elem_types,
         "tensors": tensors,
     }
 
@@ -431,7 +455,32 @@ def _infer_gguf_val_type(val: Any) -> int:
     return GGUF_VAL_STRING
 
 
-def _write_gguf_value_body(f: BinaryIO, val: Any, val_type: int) -> None:
+def _infer_array_elem_type(seq: list[Any]) -> int:
+    if not seq:
+        return GGUF_VAL_STRING
+    if all(isinstance(x, bool) for x in seq):
+        return GGUF_VAL_BOOL
+    if all(isinstance(x, int) and not isinstance(x, bool) for x in seq):
+        min_v = min(seq)
+        max_v = max(seq)
+        if min_v < 0:
+            if min_v >= -2147483648 and max_v <= 2147483647:
+                return GGUF_VAL_INT32
+            return GGUF_VAL_INT64
+        if max_v <= 4294967295:
+            return GGUF_VAL_UINT32
+        return GGUF_VAL_UINT64
+    if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in seq):
+        return GGUF_VAL_FLOAT32
+    return GGUF_VAL_STRING
+
+
+def _write_gguf_value_body(
+    f: BinaryIO,
+    val: Any,
+    val_type: int,
+    array_elem_type: int | None = None,
+) -> None:
     if val_type == GGUF_VAL_UINT8:
         f.write(struct.pack("<B", int(val)))
     elif val_type == GGUF_VAL_INT8:
@@ -458,7 +507,7 @@ def _write_gguf_value_body(f: BinaryIO, val: Any, val_type: int) -> None:
         _write_gguf_string(f, str(val))
     elif val_type == GGUF_VAL_ARRAY:
         seq = list(val)
-        elem_type = _infer_gguf_val_type(seq[0]) if seq else GGUF_VAL_STRING
+        elem_type = array_elem_type if array_elem_type is not None else _infer_array_elem_type(seq)
         f.write(struct.pack("<IQ", elem_type, len(seq)))
         for item in seq:
             _write_gguf_value_body(f, item, elem_type)
@@ -466,18 +515,24 @@ def _write_gguf_value_body(f: BinaryIO, val: Any, val_type: int) -> None:
         raise ValueError(f"Unsupported GGUF metadata value type ID for write: {val_type}")
 
 
-def _write_gguf_kv(f: BinaryIO, key: str, val: Any, val_type: int | None = None) -> None:
+def _write_gguf_kv(
+    f: BinaryIO,
+    key: str,
+    val: Any,
+    val_type: int | None = None,
+    array_elem_type: int | None = None,
+) -> None:
     _write_gguf_string(f, str(key))
     vtype = val_type if val_type is not None else _infer_gguf_val_type(val)
     f.write(struct.pack("<I", vtype))
-    _write_gguf_value_body(f, val, vtype)
+    _write_gguf_value_body(f, val, vtype, array_elem_type)
 
 
 def _encode_gguf_tensor_payload(arr: np.ndarray, target_type: str | None = None) -> tuple[int, bytes]:
     """Encodes a NumPy array into raw GGUF bytes and returns `(ggml_type_id, raw_bytes)`."""
     np_arr = np.ascontiguousarray(arr)
     t_str = (target_type or "").upper()
-    if t_str in ("Q8_0", "Q4_0", "F16", "F32") or not t_str:
+    if t_str in ("Q8_0", "Q4_0", "BF16", "F16", "F32") or not t_str:
         if not np.all(np.isfinite(np_arr)):
             raise ValueError(f"Cannot encode GGUF tensor containing NaN or Inf as {t_str or 'F32'}.")
     if t_str == "Q8_0":
@@ -500,6 +555,7 @@ def write_gguf_file(
     metadata: dict[str, Any] | None = None,
     tensor_types: dict[str, str] | None = None,
     metadata_types: dict[str, int] | None = None,
+    metadata_array_elem_types: dict[str, int] | None = None,
 ) -> Path:
     """
     Writes a valid GGUF v3 binary file containing `tensors` (`F32`, `F16`, `BF16`, `Q8_0`, or `Q4_0`)
@@ -509,6 +565,7 @@ def write_gguf_file(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     meta = dict(metadata or {})
     mtypes = dict(metadata_types or {})
+    melem_types = dict(metadata_array_elem_types or {})
     raw_align = meta.get("general.alignment", GGUF_DEFAULT_ALIGNMENT)
     alignment = int(raw_align) if isinstance(raw_align, (int, float)) and not isinstance(raw_align, bool) else GGUF_DEFAULT_ALIGNMENT
     if alignment <= 0 or (alignment & (alignment - 1)) != 0 or alignment > 1_048_576:
@@ -526,12 +583,13 @@ def write_gguf_file(
         encoded_blobs.append((name, arr.shape, ggml_type, raw_bytes))
         rel_offset = _align_offset(rel_offset + len(raw_bytes), alignment)
 
-    with out_path.open("wb") as f:
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp_path.open("wb") as f:
         f.write(GGUF_MAGIC)
         f.write(struct.pack("<IQQ", 3, len(encoded_blobs), len(meta)))
 
         for k, v in meta.items():
-            _write_gguf_kv(f, str(k), v, mtypes.get(str(k)))
+            _write_gguf_kv(f, str(k), v, mtypes.get(str(k)), melem_types.get(str(k)))
 
         curr_rel = 0
         for name, shape, ggml_type, raw_bytes in encoded_blobs:
@@ -557,6 +615,7 @@ def write_gguf_file(
                 f.write(b"\x00" * (aligned_pos - curr_pos))
                 curr_pos = aligned_pos
 
+    tmp_path.replace(out_path)
     return out_path
 
 
@@ -628,12 +687,23 @@ def stream_surgical_gguf_update(
     tensors_map: dict[str, GGUFTensorInfo] = info["tensors"]  # type: ignore[assignment]
     metadata: dict[str, Any] = dict(info["metadata"])  # type: ignore[arg-type]
     metadata_types: dict[str, int] = dict(info.get("metadata_types", {}))  # type: ignore[arg-type]
+    metadata_array_elem_types: dict[str, int] = dict(info.get("metadata_array_elem_types", {}))  # type: ignore[arg-type]
     alignment = int(info["alignment"])  # type: ignore[arg-type]
     data_start_in = int(info["data_start_offset"])  # type: ignore[arg-type]
+    in_file_size = in_path.stat().st_size
 
     missing = [tname for tname in surgical_edits if tname not in tensors_map]
     if missing:
         raise KeyError(f"Target tensor(s) {missing} not found in GGUF file {in_path}")
+
+    # Build sorted relative-offset table for exact gap-based byte length fallback on unknown types
+    sorted_by_offset = sorted(tensors_map.values(), key=lambda t: t.relative_offset)
+    next_rel_offset: dict[str, int] = {}
+    for idx_t, t_obj in enumerate(sorted_by_offset):
+        if idx_t + 1 < len(sorted_by_offset):
+            next_rel_offset[t_obj.name] = sorted_by_offset[idx_t + 1].relative_offset
+        else:
+            next_rel_offset[t_obj.name] = max(in_file_size - data_start_in, t_obj.relative_offset)
 
     updated_names: list[str] = []
     edited_payloads: dict[str, tuple[int, bytes]] = {}
@@ -657,19 +727,33 @@ def stream_surgical_gguf_update(
                 tensor_byte_lengths[name] = len(raw_bytes)
                 updated_names.append(name)
             else:
-                tensor_byte_lengths[name] = ggml_tensor_byte_size(
-                    t_info.num_elements, t_info.ggml_type_name, t_info.shape
-                )
+                if t_info.ggml_type_name in GGML_BLOCK_SPEC:
+                    tensor_byte_lengths[name] = ggml_tensor_byte_size(
+                        t_info.num_elements, t_info.ggml_type_name, t_info.shape
+                    )
+                else:
+                    gap_bytes = next_rel_offset[name] - t_info.relative_offset
+                    if gap_bytes <= 0:
+                        raise ValueError(
+                            f"Cannot determine byte size for unknown GGUF tensor type '{t_info.ggml_type_name}' on '{name}'"
+                        )
+                    tensor_byte_lengths[name] = gap_bytes
 
         metadata["circuitforge.edited_tensors"] = ",".join(updated_names)
         metadata_types["circuitforge.edited_tensors"] = GGUF_VAL_STRING
-        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp") if in_path == out_path else out_path
+        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
 
         with tmp_path.open("wb") as fout:
             fout.write(GGUF_MAGIC)
             fout.write(struct.pack("<IQQ", 3, len(tensors_map), len(metadata)))
             for k, v in metadata.items():
-                _write_gguf_kv(fout, str(k), v, metadata_types.get(str(k)))
+                _write_gguf_kv(
+                    fout,
+                    str(k),
+                    v,
+                    metadata_types.get(str(k)),
+                    metadata_array_elem_types.get(str(k)),
+                )
 
             curr_rel = 0
             for name, t_info in tensors_map.items():

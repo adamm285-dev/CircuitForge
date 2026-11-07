@@ -50,8 +50,10 @@ from circuitforge.gguf import (
 from circuitforge.hud import MechanisticTelemetryHUD
 from circuitforge.io import (
     apply_sharded_checkpoint_surgery,
+    inspect_safetensors_header,
     load_safetensors_file,
     save_safetensors_file,
+    stream_surgical_safetensors_update,
 )
 from circuitforge.recipes import (
     ContrastivePair,
@@ -61,10 +63,12 @@ from circuitforge.recipes import (
     execute_forge_recipe,
     extract_principal_circuit_directions,
 )
+from circuitforge.sentinel import MoEAnomalySentinel
 from circuitforge.surgery import (
     apply_leace_concept_erasure,
     apply_nullspace_rank1_surgery,
 )
+from circuitforge.wiring import is_routed_expert_tensor
 
 
 def test_cfm09_weight_backed_activations_and_sharded_safetensors_surgery(tmp_path: Path) -> None:
@@ -490,4 +494,133 @@ def test_round4_adversarial_hardening_gguf_sharded_leace_and_lora(tmp_path: Path
     # Must record exact module path, NOT bare 'down_proj' which would hit routed experts
     assert res_trunc["target_modules"] == ["model.layers.3.mlp.shared_expert.down_proj"]
     assert res_trunc["max_reconstruction_error"] > 0.1
+
+
+def test_round5_adversarial_hardening_hardlinks_overlap_gguf_types_and_sentinel(tmp_path: Path) -> None:
+    """
+    Verifies Round-5 adversarial audit remediations:
+    1. Atomic `.tmp` + `.replace()` in `save_safetensors_file` and `stream_surgical_safetensors_update`
+       prevents truncating hard-linked source shards on subsequent edits.
+    2. `inspect_safetensors_header` rejects overlapping `data_offsets` and negative shape dimensions.
+    3. `stream_surgical_gguf_update` preserves `INT32` array element types (e.g. `tokenizer.ggml.token_type`)
+       and handles `TQ1_0`, `TQ2_0`, `MXFP4`, or unknown tensor gap sizing.
+    4. `is_routed_expert_tensor` catches crafted tensor names combining routed expert tokens with `shared_expert`.
+    5. `MoEAnomalySentinel` intercepts `NaN` hidden states and unit-norm orthogonal hijacks.
+    6. `export_gguf_control_vector` rejects 0-based `direction.0` unless `one_based_indexing=True`.
+    """
+    import os
+    import struct
+
+    # 1. Hard-linked shard safety: editing a hard-linked output file must NOT mutate the source file
+    src_st = tmp_path / "source_shard.safetensors"
+    linked_out = tmp_path / "linked_shard.safetensors"
+    orig_arr = np.ones((4, 4), dtype=np.float32) * 7.0
+    save_safetensors_file(src_st, {"model.layers.3.self_attn.o_proj.weight": orig_arr})
+    os.link(src_st, linked_out)
+    assert os.path.samefile(src_st, linked_out)
+
+    stream_surgical_safetensors_update(
+        src_st,
+        linked_out,
+        {"model.layers.3.self_attn.o_proj.weight": lambda w: w * 2.0},
+    )
+    assert not os.path.samefile(src_st, linked_out)
+    src_tensors, _ = load_safetensors_file(src_st)
+    out_tensors, _ = load_safetensors_file(linked_out)
+    np.testing.assert_allclose(src_tensors["model.layers.3.self_attn.o_proj.weight"], 7.0)
+    np.testing.assert_allclose(out_tensors["model.layers.3.self_attn.o_proj.weight"], 14.0)
+
+    # 2. Overlapping safetensors data_offsets & negative dimension rejection
+    overlap_st = tmp_path / "overlap.safetensors"
+    overlap_hdr = json.dumps(
+        {
+            "model.layers.3.self_attn.o_proj.weight": {
+                "dtype": "F32",
+                "shape": [2, 2],
+                "data_offsets": [0, 16],
+            },
+            "model.layers.3.mlp.experts.0.down_proj.weight": {
+                "dtype": "F32",
+                "shape": [2, 2],
+                "data_offsets": [8, 24],
+            },
+        }
+    ).encode("utf-8")
+    pad = (8 - (len(overlap_hdr) % 8)) % 8
+    overlap_hdr += b" " * pad
+    overlap_st.write_bytes(struct.pack("<Q", len(overlap_hdr)) + overlap_hdr + (b"\x00" * 24))
+    with pytest.raises(ValueError, match="Overlapping safetensors data_offsets"):
+        inspect_safetensors_header(overlap_st)
+
+    # 3. GGUF INT32 array element type preservation across write & surgical update
+    gguf_a = tmp_path / "int32_arr.gguf"
+    gguf_b = tmp_path / "int32_arr_forged.gguf"
+    w_ctrl = np.ones((2, 32), dtype=np.float32)
+    write_gguf_file(
+        gguf_a,
+        {"blk.3.attn_output.weight": w_ctrl},
+        metadata={
+            "general.architecture": "qwen3moe",
+            "tokenizer.ggml.token_type": [1, 3, -1, 1],
+        },
+        tensor_types={"blk.3.attn_output.weight": "Q8_0"},
+    )
+    info_a = inspect_gguf_header(gguf_a)
+    assert info_a["metadata"]["tokenizer.ggml.token_type"] == [1, 3, -1, 1]
+    assert info_a["metadata_array_elem_types"]["tokenizer.ggml.token_type"] == 5  # GGUF_VAL_INT32
+
+    # Also test positive INT32 array preserved via metadata_array_elem_types
+    write_gguf_file(
+        gguf_a,
+        {"blk.3.attn_output.weight": w_ctrl},
+        metadata={
+            "general.architecture": "qwen3moe",
+            "tokenizer.ggml.token_type": [1, 3, 1, 1],
+        },
+        tensor_types={"blk.3.attn_output.weight": "Q8_0"},
+        metadata_array_elem_types={"tokenizer.ggml.token_type": 5},
+    )
+    stream_surgical_gguf_update(
+        gguf_a,
+        gguf_b,
+        {"blk.3.attn_output.weight": lambda w: w + 1.0},
+    )
+    info_b = inspect_gguf_header(gguf_b)
+    assert info_b["metadata_array_elem_types"]["tokenizer.ggml.token_type"] == 5
+
+    # 4. Routed expert substring bypass blocked
+    assert is_routed_expert_tensor("model.layers.0.mlp.experts.7.shared_expert_bypass.weight") is True
+    assert is_routed_expert_tensor("blk.3.ffn_down_shexp.ffn_down_exps.weight") is True
+    assert is_routed_expert_tensor("model.layers.0.mlp.shared_expert.down_proj.weight") is False
+
+    # 5. MoEAnomalySentinel NaN & unit-norm orthogonal hijack interception
+    sentinel = MoEAnomalySentinel(d_model=16, num_experts=8, auditor_expert_id=7)
+    rng = np.random.default_rng(123)
+    benign_basis = np.eye(16, dtype=np.float32)[:4]
+    benign_acts = (rng.standard_normal((32, 4)).astype(np.float32) @ benign_basis)
+    benign_logits = np.array([4.0, 3.5, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1], dtype=np.float32)
+    sentinel.calibrate_baseline(benign_acts)
+
+    nan_h = np.zeros(16, dtype=np.float32)
+    nan_h[0] = np.nan
+    _, nan_tel = sentinel.inspect_and_route(nan_h, benign_logits)
+    assert nan_tel.dispatched_to_auditor is True
+    assert nan_tel.trigger_reason == "NON_FINITE_SPIKE"
+
+    # Pure orthogonal vector with normal 1.0x norm
+    ortho_h = np.zeros(16, dtype=np.float32)
+    ortho_h[15] = 1.0
+    _, ortho_tel = sentinel.inspect_and_route(ortho_h, benign_logits)
+    assert ortho_tel.dispatched_to_auditor is True
+    assert ortho_tel.trigger_reason == "ORTHOGONAL_DRIFT"
+    sentinel.close()
+
+    # 6. export_gguf_control_vector rejects 0-based layer index when one_based_indexing=False
+    with pytest.raises(ValueError, match="layer index >= 1"):
+        export_gguf_control_vector(
+            tmp_path / "bad_cvec.gguf",
+            {0: np.ones(16, dtype=np.float32)},
+            one_based_indexing=False,
+        )
+
 

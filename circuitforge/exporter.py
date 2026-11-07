@@ -45,15 +45,19 @@ def render_model_card_markdown(
 
     edit_rows = []
     for rep in edits:
+        safe_tname = str(rep["tensor_name"]).replace("\n", " ").replace("|", "\\|")
         edit_rows.append(
-            f"| `{rep['tensor_name']}` | `L{rep['layer_idx']}` | `{rep['alpha']}` | "
+            f"| `{safe_tname}` | `L{rep['layer_idx']}` | `{rep['alpha']}` | "
             f"`{rep['frobenius_delta']:.5f}` | `{rep['target_alignment_before']:.4f} -> {rep['target_alignment_after']:.4f}` | "
             f"`{rep['nullspace_leakage_max']:.3e}` |"
         )
     edits_table = "\n".join(edit_rows) if edit_rows else "| *(none)* | - | - | - | - | - |"
+    safe_license = str(license_name).splitlines()[0].strip() if str(license_name).strip() else "apache-2.0"
+    safe_model_id = str(model_id).splitlines()[0].strip() if str(model_id).strip() else "circuitforge-model"
+    leak_status = "Verified `< 1e-6`" if max_leakage < 1e-6 else f"Measured `{max_leakage:.3e}`"
 
     return f"""---
-license: {license_name}
+license: {safe_license}
 base_model: {wmap.model_name}
 library_name: circuitforge
 tags:
@@ -64,7 +68,7 @@ tags:
   - moe
 ---
 
-# {model_id}
+# {safe_model_id}
 
 **{description}**
 
@@ -88,7 +92,7 @@ Forged with [**CircuitForge**](https://github.com/adamm285-dev/CircuitForge) usi
 
 - **Recipe Name**: `{recipe_result.get('recipe_name', 'custom_forge')}`
 - **Edited Tensors Count**: `{recipe_result.get('edited_tensors_count', len(edits))}`
-- **Maximum Null-Space Leakage ($\\|\\Delta W K_0^\\top\\|_\\infty$)**: `{max_leakage:.3e}` (Verified `< 1e-6`)
+- **Maximum Null-Space Leakage ($\\|\\Delta W K_0^\\top\\|_\\infty$)**: `{max_leakage:.3e}` ({leak_status})
 
 | Target Control Tensor | Layer | $\\alpha$ | $\\|\\Delta W\\|_F$ | Target Alignment (`Before -> After`) | Null-Space Leakage |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -418,7 +422,12 @@ def export_gguf_control_vector(
                 f"Inconsistent steering vector dimension at layer {l_idx}: "
                 f"expected {expected_dim}, got {arr.size}"
             )
-        out_idx = int(l_idx) + 1 if (one_based_indexing or int(l_idx) == 0) and one_based_indexing else int(l_idx)
+        out_idx = int(l_idx) + 1 if one_based_indexing else int(l_idx)
+        if out_idx < 1:
+            raise ValueError(
+                f"llama.cpp control-vector requires direction.N layer index >= 1, got {out_idx} "
+                f"(pass one_based_indexing=True when supplying 0-based layer indices)."
+            )
         gguf_tensors[f"direction.{out_idx}"] = arr
 
     metadata: dict[str, str | int | float | bool] = {

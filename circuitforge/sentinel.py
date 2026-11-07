@@ -188,6 +188,25 @@ class MoEAnomalySentinel:
             raise ValueError(f"Expected hidden_state dim {self.d_model}, got {h.shape[0]}")
 
         logits = np.asarray(router_logits, dtype=np.float32).reshape(-1)
+        if not np.all(np.isfinite(h)) or not np.all(np.isfinite(logits)):
+            h_safe = np.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
+            h_clean = (self._P_safe @ h_safe).astype(np.float32)
+            report = SentinelProbeReport(
+                layer_idx=layer_idx,
+                token_idx=token_idx,
+                norm_before=float("inf"),
+                norm_after=float(np.linalg.norm(h_clean)),
+                z_score_norm=float("inf"),
+                router_entropy=0.0,
+                entropy_ratio=0.0,
+                is_anomalous=True,
+                trigger_reason="NON_FINITE_SPIKE",
+                dispatched_to_auditor=True,
+                routed_top_k_experts=[self.auditor_expert_id],
+                neutralized_drift_norm=float("inf"),
+            )
+            return h_clean, report
+
         norm_before = float(np.linalg.norm(h))
         z_norm = (norm_before - self._mean_norm) / self._std_norm
         norm_ratio = norm_before / self._mean_norm
@@ -201,9 +220,12 @@ class MoEAnomalySentinel:
         max_ent = float(math.log(max(logits.size, 2)))
         ent_ratio = ent / max(max_ent, 1e-8)
 
-        # Anomaly decision rules
+        # Anomaly decision rules (also catch unit-norm / normal-magnitude pure orthogonal hijacks >= 0.85)
         is_mag_spike = (z_norm > self.norm_z_threshold) and (norm_ratio > self.norm_ratio_threshold)
-        is_ortho_attack = self._calibrated and (ortho_ratio > self.orthogonal_energy_threshold) and (norm_ratio > 1.15)
+        is_ortho_attack = self._calibrated and (
+            ((ortho_ratio > self.orthogonal_energy_threshold) and (norm_ratio > 1.15))
+            or (ortho_ratio > max(self.orthogonal_energy_threshold, 0.85))
+        )
         is_ent_surge = (ent_ratio > self.entropy_surge_ratio) and (norm_ratio > 1.35)
 
         is_anomalous = bool(is_mag_spike or is_ortho_attack or is_ent_surge)

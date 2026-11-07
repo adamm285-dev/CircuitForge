@@ -459,13 +459,19 @@ def main() -> int:
             if args.base_checkpoint and args.forged_checkpoint:
                 base_t, _ = load_safetensors_file(args.base_checkpoint)
                 forged_t, _ = load_safetensors_file(args.forged_checkpoint)
-                deltas = {
-                    k: (forged_t[k].astype(np.float32) - base_t[k].astype(np.float32))
-                    for k in forged_t
-                    if k in base_t
-                    and not is_routed_expert_tensor(k)
-                    and float(np.linalg.norm(forged_t[k].astype(np.float32) - base_t[k].astype(np.float32))) > 1e-7
-                }
+                deltas: dict[str, np.ndarray] = {}
+                for k in forged_t:
+                    if k not in base_t:
+                        continue
+                    diff = forged_t[k].astype(np.float32) - base_t[k].astype(np.float32)
+                    if float(np.linalg.norm(diff)) > 1e-7:
+                        if is_routed_expert_tensor(k):
+                            raise PermissionError(
+                                f"CircuitForge Safety Gate: Routed expert '{k}' was modified between base and forged checkpoints!"
+                            )
+                        deltas[k] = diff
+            elif args.base_checkpoint or args.forged_checkpoint:
+                raise ValueError("Both --base-checkpoint and --forged-checkpoint must be provided together.")
             else:
                 u = rng.standard_normal((64, 2)).astype(np.float32)
                 v = rng.standard_normal((2, 64)).astype(np.float32)
