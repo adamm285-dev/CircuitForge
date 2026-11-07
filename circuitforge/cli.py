@@ -27,7 +27,7 @@ from circuitforge.exporter import (
 )
 from circuitforge.gguf import GGUFTensorInfo, inspect_gguf_header
 from circuitforge.hud import MechanisticHUDServer, MechanisticTelemetryHUD, export_hud_snapshot
-from circuitforge.io import inspect_safetensors_header
+from circuitforge.io import inspect_safetensors_header, load_safetensors_file
 from circuitforge.native import benchmark_native_vs_numpy, has_native_engine
 from circuitforge.recipes import execute_forge_recipe, load_forge_recipe
 from circuitforge.sentinel import evaluate_sentinel_benchmark
@@ -301,14 +301,17 @@ def main() -> int:
         choices=sorted(BUILTIN_PROFILES.keys()),
         help="Model architecture profile",
     )
+    disc_p.add_argument("--checkpoint", default=None, help="Optional .safetensors checkpoint path to sweep")
     disc_p.add_argument("--top-k", type=int, default=4, help="Number of top causal anchor layers to select")
-    disc_p.add_argument("--out-recipe", default=None, help="Optional output path for auto-generated .forge.json recipe")
+    disc_p.add_argument("--out-recipe", "--output-recipe", dest="out_recipe", default=None, help="Optional output path for auto-generated .forge.json recipe")
 
     lora_p = sub.add_parser(
         "export-lora",
         help="Export a surgical weight delta as a Hugging Face PEFT LoRA adapter or llama.cpp control vector (CFM-11)",
     )
-    lora_p.add_argument("--out", default="lora_adapter", help="Output directory for PEFT LoRA or .gguf path for control vector")
+    lora_p.add_argument("--out", "--output-dir", dest="out", default="lora_adapter", help="Output directory for PEFT LoRA or .gguf path for control vector")
+    lora_p.add_argument("--base-checkpoint", default=None, help="Optional base .safetensors checkpoint path")
+    lora_p.add_argument("--forged-checkpoint", default=None, help="Optional forged .safetensors checkpoint path")
     lora_p.add_argument("--rank", type=int, default=4, help="LoRA rank r")
     lora_p.add_argument("--control-vector", action="store_true", help="Export llama.cpp --control-vector GGUF instead of PEFT LoRA")
 
@@ -413,12 +416,25 @@ def main() -> int:
         return 0
     if args.cmd == "discover-circuit":
         wmap = load_wiring_map(profile_name=args.profile)
-        rng = np.random.default_rng(42)
-        candidate_layers = wmap.full_attention_layers[:8] or [0, 1, 2, 3]
-        layer_weights = {
-            l_idx: (rng.standard_normal((64, 64)).astype(np.float32) * (0.08 if l_idx in wmap.mid_to_late_planning_anchors else 0.02))
-            for l_idx in candidate_layers
-        }
+        if args.checkpoint:
+            raw_tensors, _ = load_safetensors_file(args.checkpoint)
+            layer_weights: dict[int, np.ndarray] = {}
+            for tname, arr in raw_tensors.items():
+                if tname.endswith("self_attn.o_proj.weight") and arr.ndim == 2:
+                    parts = tname.split(".")
+                    for idx, p in enumerate(parts):
+                        if p == "layers" and idx + 1 < len(parts) and parts[idx + 1].isdigit():
+                            layer_weights[int(parts[idx + 1])] = arr
+                            break
+            if not layer_weights:
+                raise ValueError(f"No self_attn.o_proj.weight tensors found in checkpoint {args.checkpoint}")
+        else:
+            rng = np.random.default_rng(42)
+            candidate_layers = wmap.full_attention_layers[:8] or [0, 1, 2, 3]
+            layer_weights = {
+                l_idx: (rng.standard_normal((64, 64)).astype(np.float32) * (0.08 if l_idx in wmap.mid_to_late_planning_anchors else 0.02))
+                for l_idx in candidate_layers
+            }
         res = discover_optimal_surgical_circuit(
             layer_weights=layer_weights,
             top_k_layers=args.top_k,
@@ -440,9 +456,20 @@ def main() -> int:
             out_cv = export_gguf_control_vector(args.out, vecs)
             print(json.dumps({"control_vector_gguf": str(out_cv), "layers": sorted(vecs.keys())}, indent=2))
         else:
-            u = rng.standard_normal((64, 2)).astype(np.float32)
-            v = rng.standard_normal((2, 64)).astype(np.float32)
-            deltas = {"model.layers.15.self_attn.o_proj.weight": u @ v}
+            if args.base_checkpoint and args.forged_checkpoint:
+                base_t, _ = load_safetensors_file(args.base_checkpoint)
+                forged_t, _ = load_safetensors_file(args.forged_checkpoint)
+                deltas = {
+                    k: (forged_t[k].astype(np.float32) - base_t[k].astype(np.float32))
+                    for k in forged_t
+                    if k in base_t
+                    and not is_routed_expert_tensor(k)
+                    and float(np.linalg.norm(forged_t[k].astype(np.float32) - base_t[k].astype(np.float32))) > 1e-7
+                }
+            else:
+                u = rng.standard_normal((64, 2)).astype(np.float32)
+                v = rng.standard_normal((2, 64)).astype(np.float32)
+                deltas = {"model.layers.15.self_attn.o_proj.weight": u @ v}
             res = export_surgical_lora(args.out, deltas, rank=args.rank)
             print(json.dumps(res, indent=2))
         return 0

@@ -85,12 +85,12 @@ python -m circuitforge verify-sentinel
 python -m circuitforge verify-engram
 
 # 8. Automatically sweep candidate layers for Direct Logit Attribution (DLA) & Null-Space SLR
-python -m circuitforge discover-circuit --checkpoint model.safetensors --profile Qwen3.6-35B-A3B --top-k 2 --output-recipe auto.forge.json
+python -m circuitforge discover-circuit --profile Qwen3.6-35B-A3B --top-k 2 --out-recipe auto.forge.json
 
-# 9. Export surgical weight deltas between base and forged checkpoints as a Hugging Face PEFT LoRA adapter
-python -m circuitforge export-lora --base-checkpoint base.safetensors --forged-checkpoint forged.safetensors --output-dir ./lora_adapter --rank 4
+# 9. Export surgical weight deltas as a Hugging Face PEFT LoRA adapter (or --control-vector GGUF)
+python -m circuitforge export-lora --out ./lora_adapter --rank 4
 
-# 10. Run the full pytest suite (62 tests across CFM-01 through CFM-12 + adversarial audits)
+# 10. Run the full pytest suite (63 tests across CFM-01 through CFM-12 + adversarial audits)
 pytest -v
 ```
 
