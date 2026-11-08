@@ -1076,9 +1076,26 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     text-align: center;
   }}
   table.heatmap th {{ background: #0f172a; color: #cbd5e1; position: sticky; top: 0; z-index: 2; font-weight: 600; border-bottom: 1px solid #334155; }}
+  table.heatmap td {{ cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }}
+  table.heatmap td:hover {{ transform: scale(1.08); z-index: 3; position: relative; box-shadow: 0 0 10px rgba(56, 189, 248, 0.55); }}
+  table.heatmap td.cell-selected {{ outline: 2px solid #ffffff; box-shadow: 0 0 14px #38bdf8; z-index: 4; position: relative; }}
   .cell-cool_blue {{ background: linear-gradient(180deg, rgba(2, 132, 199, 0.28), rgba(3, 105, 161, 0.42)); color: #bae6fd; border: 1px solid rgba(56, 189, 248, 0.15); }}
-  .cell-elevated_amber {{ background: linear-gradient(180deg, rgba(245, 158, 11, 0.45), rgba(217, 119, 6, 0.62)); color: #fef3c7; font-weight: 700; border: 1px solid rgba(251, 191, 36, 0.4); }}
-  .cell-spike_crimson {{ background: linear-gradient(180deg, rgba(239, 68, 68, 0.82), rgba(185, 28, 28, 0.92)); color: #ffffff; font-weight: 700; border: 1px solid rgba(252, 165, 165, 0.65); box-shadow: 0 0 8px rgba(239, 68, 68, 0.45); }}
+  .cell-elevated_amber {{ background: linear-gradient(180deg, rgba(245, 158, 11, 0.48), rgba(217, 119, 6, 0.65)); color: #fef3c7; font-weight: 700; border: 1px solid rgba(251, 191, 36, 0.45); }}
+  .cell-spike_crimson {{ background: linear-gradient(180deg, rgba(16, 185, 129, 0.78), rgba(5, 150, 105, 0.92)); color: #ffffff; font-weight: 700; border: 1px solid rgba(110, 231, 183, 0.75); box-shadow: 0 0 9px rgba(16, 185, 129, 0.45); }}
+  .cell-inspector-bar {{
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.95) 0%, rgba(6, 20, 35, 0.95) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    font-size: 0.76rem;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+  }}
   .bar-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 0.76rem; font-family: 'JetBrains Mono', Consolas, monospace; }}
   .bar-track {{ flex: 1; background: rgba(2, 6, 23, 0.9); height: 11px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(30, 41, 59, 0.9); }}
   .bar-fill {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, #0284c7, #38bdf8, #7dd3fc); box-shadow: 0 0 8px rgba(56, 189, 248, 0.45); }}
@@ -1584,12 +1601,22 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     </div>
 
     <div class="legend">
-      <span><i class="dot" style="background:#0284c7;"></i>Cool Blue (Baseline &le;1.35x)</span>
-      <span><i class="dot" style="background:#f59e0b;"></i>Elevated Amber (1.35x..2.25x)</span>
-      <span><i class="dot" style="background:#ef4444;"></i>Spike Crimson (&gt;2.25x Steered Anchor)</span>
+      <span><i class="dot" style="background:#0284c7;"></i>Cool Blue (Baseline Unedited &le;1.35x)</span>
+      <span><i class="dot" style="background:#f59e0b;"></i>Elevated Gold (Moderate Edit 1.35x..2.25x)</span>
+      <span><i class="dot" style="background:#10b981;"></i>Active Emerald (&gt;2.25x Peak Steered Anchor Firing)</span>
+      <span style="color:#7dd3fc; margin-left:auto;">&#128070; Click any cell to inspect or toggle layer surgery</span>
     </div>
     <div class="heatmap-wrap">
       <table class="heatmap" id="heatmap-table"></table>
+    </div>
+    <div class="cell-inspector-bar" id="cell-inspector-bar">
+      <div id="cell-inspector-text" style="color:#bae6fd;">
+        Click any Layer &times; Token cell above (e.g. an <strong style="color:#34d399;">Active Emerald</strong> or <strong style="color:#fbbf24;">Elevated Gold</strong> cell) to inspect its exact Null-Space surgical delta and toggle whether that layer is steered.
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="cell-toggle-layer-btn" style="display:none; padding:5px 11px; font-size:0.74rem;"></button>
+        <button id="cell-sentinel-btn" style="display:none; padding:5px 11px; font-size:0.74rem; border-color:rgba(239,68,68,0.55); color:#fca5a5;">Test Sentinel on Layer</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1678,18 +1705,25 @@ function renderHUD(state) {{
   const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const tbl = document.getElementById('heatmap-table');
   const tokens = state.heatmap.tokens;
+  const activeSet = new Set((state.controls && state.controls.active_anchor_layers) || []);
   let html = '<thead><tr><th>Layer</th>' + tokens.map(t => `<th>${{escHtml(t)}}</th>`).join('') + '</tr></thead><tbody>';
   for (let l = 0; l < state.heatmap.num_layers; l++) {{
     const mags = state.heatmap.magnitudes[l];
     const cols = state.heatmap.color_bands[l];
-    html += `<tr><td><strong>L${{l}}</strong></td>`;
+    const isActL = activeSet.has(l);
+    const lBadge = isActL ? ` <span style="color:#34d399; font-size:0.65rem;" title="Active Surgical Anchor">&#9679;</span>` : '';
+    html += `<tr><td data-layer="${{l}}" data-token="-1"><strong>L${{l}}</strong>${{lBadge}}</td>`;
     for (let t = 0; t < tokens.length; t++) {{
-      html += `<td class="cell-${{cols[t]}}" title="L${{l}} ${{escHtml(tokens[t])}}: ${{mags[t]}}">${{mags[t].toFixed(2)}}</td>`;
+      const isSel = (window.selectedCell && window.selectedCell.l === l && window.selectedCell.t === t) ? ' cell-selected' : '';
+      html += `<td class="cell-${{cols[t]}}${{isSel}}" data-layer="${{l}}" data-token="${{t}}" title="Click to inspect L${{l}} @ ${{escHtml(tokens[t])}} (${{mags[t]}})">${{mags[t].toFixed(2)}}</td>`;
     }}
     html += '</tr>';
   }}
   html += '</tbody>';
   tbl.innerHTML = html;
+  if (window.selectedCell) {{
+    updateCellInspector(window.selectedCell.l, window.selectedCell.t);
+  }}
 
   // Render MoE Routing & Entropy Equalizer
   const rCont = document.getElementById('routing-container');
@@ -1821,12 +1855,16 @@ function renderHUD(state) {{
   }}
 }}
 
-async function pushSteer(alphaVal, schedVal) {{
+async function pushSteer(alphaVal, schedVal, activeLayersOverride) {{
+  const bodyObj = {{ alpha: parseFloat(alphaVal), schedule: schedVal }};
+  if (Array.isArray(activeLayersOverride)) {{
+    bodyObj.active_layers = activeLayersOverride;
+  }}
   try {{
     const resp = await fetch('/api/steer', {{
       method: 'POST',
       headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ alpha: parseFloat(alphaVal), schedule: schedVal }})
+      body: JSON.stringify(bodyObj)
     }});
     if (resp.ok) {{
       hudState = await resp.json();
@@ -1837,9 +1875,94 @@ async function pushSteer(alphaVal, schedVal) {{
     // Offline static preview fallback: approximate shift locally
     hudState.controls.global_alpha = parseFloat(alphaVal);
     hudState.controls.schedule = schedVal;
+    if (Array.isArray(activeLayersOverride)) {{
+      hudState.controls.active_anchor_layers = activeLayersOverride;
+    }}
     renderHUD(hudState);
   }}
 }}
+
+window.selectedCell = null;
+
+function updateCellInspector(l, t) {{
+  if (!hudState || !hudState.heatmap) return;
+  const tokens = hudState.heatmap.tokens;
+  const tokIdx = t >= 0 ? t : 8;
+  const tokName = tokens[tokIdx] || '';
+  const mag = hudState.heatmap.magnitudes[l][tokIdx];
+  const band = hudState.heatmap.color_bands[l][tokIdx];
+  const fullAttnSet = new Set((hudState.profile && hudState.profile.full_attention_layers) || []);
+  const activeList = (hudState.controls && hudState.controls.active_anchor_layers) || [];
+  const isAct = activeList.includes(l);
+  const attnType = fullAttnSet.has(l) ? 'Full-Attention Anchor (Global Planning)' : 'Gated-DeltaNet Linear Attention';
+  const surg = (hudState.surgery_reports || []).find(r => r.layer_idx === l);
+  const align = (hudState.alignment_inspector || [])[l] || {{ cosine_similarity: 0, subspace_angle_deg: 90 }};
+
+  const bandLabel = band === 'spike_crimson'
+    ? '<strong style="color:#34d399;">ACTIVE EMERALD (Peak Steered Firing)</strong>'
+    : (band === 'elevated_amber'
+      ? '<strong style="color:#fbbf24;">ELEVATED GOLD (Moderate Steered Firing)</strong>'
+      : '<span style="color:#7dd3fc;">COOL BLUE (Unedited Baseline)</span>');
+
+  const surgInfo = surg
+    ? `Applied &alpha;<sub>L${{l}}</sub> = <strong>${{surg.alpha.toFixed(2)}}</strong> | &Delta;W<sub>F</sub> = ${{surg.frobenius_delta.toFixed(3)}} | K0 Leak = <strong style="color:#34d399;">${{surg.nullspace_leakage}}</strong>`
+    : `Applied &alpha;<sub>L${{l}}</sub> = <strong>0.00</strong> (Layer currently unsteered)`;
+
+  const txtEl = document.getElementById('cell-inspector-text');
+  if (txtEl) {{
+    txtEl.innerHTML =
+      `<span style="color:#38bdf8; font-weight:700;">[L${{l}} &times; "${{tokName}}"]</span> ` +
+      `L2 Norm = <strong>${{mag.toFixed(3)}}</strong> (${{bandLabel}}) | ${{attnType}}<br/>` +
+      `${{surgInfo}} | Alignment: cos &theta; = ${{align.cosine_similarity.toFixed(3)}} (${{align.subspace_angle_deg.toFixed(1)}}&deg;)`;
+  }}
+
+  const togBtn = document.getElementById('cell-toggle-layer-btn');
+  if (togBtn) {{
+    togBtn.style.display = 'inline-block';
+    togBtn.textContent = isAct ? `Mute Layer L${{l}} from Surgery` : `Include Layer L${{l}} in Surgery`;
+    togBtn.style.borderColor = isAct ? 'rgba(245,158,11,0.65)' : 'rgba(16,185,129,0.65)';
+    togBtn.style.color = isAct ? '#fde68a' : '#6ee7b7';
+    togBtn.onclick = () => {{
+      let nextLayers = activeList.slice();
+      if (isAct) {{
+        if (nextLayers.length > 1) {{
+          nextLayers = nextLayers.filter(x => x !== l);
+        }}
+      }} else {{
+        nextLayers.push(l);
+      }}
+      pushSteer(document.getElementById('alpha-slider').value, document.getElementById('schedule-select').value, nextLayers);
+    }};
+  }}
+
+  const senBtn = document.getElementById('cell-sentinel-btn');
+  if (senBtn) {{
+    senBtn.style.display = 'inline-block';
+    senBtn.textContent = `Simulate Spike @ L${{l}}`;
+    senBtn.onclick = async () => {{
+      try {{
+        const resp = await fetch('/api/simulate-spike', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{ attack_type: 'orthogonal_hijack', layer_idx: l }})
+        }});
+        if (resp.ok) {{
+          hudState = await resp.json();
+          renderHUD(hudState);
+        }}
+      }} catch (e) {{}}
+    }};
+  }}
+}}
+
+document.getElementById('heatmap-table').addEventListener('click', (e) => {{
+  const td = e.target.closest('td[data-layer]');
+  if (!td) return;
+  const l = parseInt(td.getAttribute('data-layer'), 10);
+  const t = parseInt(td.getAttribute('data-token'), 10);
+  window.selectedCell = {{ l, t: t >= 0 ? t : 8 }};
+  renderHUD(hudState);
+}});
 
 document.getElementById('alpha-slider').addEventListener('input', (e) => {{
   const v = parseFloat(e.target.value).toFixed(2);
@@ -1849,6 +1972,12 @@ document.getElementById('alpha-slider').addEventListener('input', (e) => {{
     fsVal.textContent = v;
     document.getElementById('fs-alpha-slider').value = e.target.value;
   }}
+  pushSteer(e.target.value, document.getElementById('schedule-select').value);
+}});
+document.getElementById('schedule-select').addEventListener('change', (e) => {{
+  const fsSel = document.getElementById('fs-schedule-select');
+  if (fsSel) fsSel.value = e.target.value;
+  pushSteer(document.getElementById('alpha-slider').value, e.target.value);
 }});
 document.getElementById('apply-btn').addEventListener('click', () => {{
   pushSteer(document.getElementById('alpha-slider').value, document.getElementById('schedule-select').value);
