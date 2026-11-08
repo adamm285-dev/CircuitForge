@@ -868,252 +868,327 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
 <title>CircuitForge :: Real-Time Mechanistic Telemetry HUD</title>
 <style>
   :root {{
-    --bg-dark: #070b14;
-    --panel-bg: #0f172a;
-    --panel-border: #1e293b;
-    --text-main: #e2e8f0;
+    --bg-dark: #030712;
+    --panel-bg: rgba(15, 23, 42, 0.88);
+    --panel-border: rgba(51, 65, 85, 0.65);
+    --panel-glow: rgba(56, 189, 248, 0.14);
+    --text-main: #f1f5f9;
     --text-muted: #94a3b8;
     --cool-blue: #0284c7;
     --elevated-amber: #f59e0b;
     --spike-crimson: #ef4444;
     --accent-cyan: #38bdf8;
     --accent-emerald: #10b981;
+    --accent-indigo: #818cf8;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
-    background: var(--bg-dark);
+    background:
+      radial-gradient(circle at 15% 5%, rgba(14, 165, 233, 0.11) 0%, transparent 40%),
+      radial-gradient(circle at 85% 15%, rgba(99, 102, 241, 0.10) 0%, transparent 42%),
+      radial-gradient(circle at 50% 90%, rgba(16, 185, 129, 0.07) 0%, transparent 50%),
+      var(--bg-dark);
     color: var(--text-main);
-    font-family: 'Segoe UI', system-ui, -apple-system, monospace;
-    padding: 18px;
-    line-height: 1.45;
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    padding: 20px 24px;
+    line-height: 1.5;
+    min-height: 100vh;
   }}
   header {{
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 14px 20px;
-    background: var(--panel-bg);
-    border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    margin-bottom: 16px;
+    padding: 16px 22px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(9, 14, 28, 0.95) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 12px;
+    margin-bottom: 18px;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(12px);
   }}
-  .brand {{ font-size: 1.25rem; font-weight: 700; color: var(--accent-cyan); letter-spacing: 0.5px; }}
+  .brand {{
+    font-size: 1.22rem;
+    font-weight: 800;
+    background: linear-gradient(90deg, #38bdf8 0%, #818cf8 55%, #34d399 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 0.7px;
+  }}
   .badge {{
-    display: inline-block;
-    padding: 4px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 11px;
     border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    background: #1e293b;
-    color: var(--accent-emerald);
-    border: 1px solid var(--accent-emerald);
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.45);
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
   }}
   .grid-top {{
     display: grid;
-    grid-template-columns: 360px 1fr;
-    gap: 16px;
-    margin-bottom: 16px;
+    grid-template-columns: 370px 1fr;
+    gap: 18px;
+    margin-bottom: 18px;
   }}
   .grid-bottom {{
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 16px;
+    gap: 18px;
   }}
   .panel {{
-    background: var(--panel-bg);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(9, 13, 24, 0.94) 100%);
     border: 1px solid var(--panel-border);
-    border-radius: 8px;
-    padding: 16px;
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }}
   .panel h2 {{
-    font-size: 0.95rem;
+    font-size: 0.88rem;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
+    letter-spacing: 1px;
     color: var(--accent-cyan);
-    margin-bottom: 12px;
-    border-bottom: 1px solid var(--panel-border);
-    padding-bottom: 6px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.55);
+    padding-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }}
   .control-group {{ margin-bottom: 14px; }}
-  .control-group label {{ display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 4px; }}
+  .control-group label {{ display: block; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 5px; font-weight: 500; }}
   input[type=range] {{ width: 100%; accent-color: var(--accent-cyan); cursor: pointer; }}
   select, button {{
-    background: #1e293b;
+    background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     color: var(--text-main);
-    border: 1px solid #334155;
-    padding: 7px 12px;
-    border-radius: 5px;
-    font-size: 0.85rem;
+    border: 1px solid rgba(71, 85, 105, 0.75);
+    padding: 7px 13px;
+    border-radius: 7px;
+    font-size: 0.81rem;
+    font-weight: 600;
     cursor: pointer;
+    transition: all 0.16s ease;
   }}
-  button:hover {{ border-color: var(--accent-cyan); }}
+  button:hover, select:hover {{
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.22);
+    transform: translateY(-1px);
+  }}
   .output-box {{
-    background: #020617;
-    border: 1px solid #1e293b;
-    border-radius: 6px;
-    padding: 10px;
-    font-family: monospace;
-    font-size: 0.8rem;
-    color: #38bdf8;
+    background: rgba(2, 6, 23, 0.85);
+    border: 1px solid rgba(51, 65, 85, 0.65);
+    border-left: 3px solid var(--accent-cyan);
+    border-radius: 7px;
+    padding: 10px 12px;
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+    font-size: 0.78rem;
+    color: #7dd3fc;
     margin-top: 8px;
     word-break: break-all;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
   }}
-  .heatmap-wrap {{ overflow-x: auto; max-height: 360px; overflow-y: auto; }}
-  table.heatmap {{ border-collapse: collapse; width: 100%; font-size: 0.72rem; font-family: monospace; }}
+  .heatmap-wrap {{
+    overflow-x: auto;
+    max-height: 360px;
+    overflow-y: auto;
+    border-radius: 8px;
+    border: 1px solid rgba(30, 41, 59, 0.85);
+  }}
+  table.heatmap {{ border-collapse: separate; border-spacing: 2px; width: 100%; font-size: 0.71rem; font-family: 'JetBrains Mono', Consolas, monospace; background: #020617; padding: 4px; }}
   table.heatmap th, table.heatmap td {{
-    border: 1px solid #0f172a;
-    padding: 3px 5px;
+    border-radius: 4px;
+    padding: 4px 6px;
     text-align: center;
   }}
-  table.heatmap th {{ background: #1e293b; color: var(--text-muted); position: sticky; top: 0; }}
-  .cell-cool_blue {{ background: rgba(2, 132, 199, 0.35); color: #bae6fd; }}
-  .cell-elevated_amber {{ background: rgba(245, 158, 11, 0.45); color: #fef3c7; font-weight: 600; }}
-  .cell-spike_crimson {{ background: rgba(239, 68, 68, 0.75); color: #ffffff; font-weight: 700; }}
-  .bar-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.78rem; font-family: monospace; }}
-  .bar-track {{ flex: 1; background: #020617; height: 12px; border-radius: 4px; overflow: hidden; }}
-  .bar-fill {{ height: 100%; background: linear-gradient(90deg, #0284c7, #38bdf8); }}
-  .bar-fill-align {{ height: 100%; background: linear-gradient(90deg, #10b981, #34d399); }}
-  .bar-fill-slr {{ height: 100%; background: linear-gradient(90deg, #8b5cf6, #38bdf8); }}
-  .legend {{ display: flex; gap: 14px; font-size: 0.75rem; margin-bottom: 8px; color: var(--text-muted); }}
-  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }}
+  table.heatmap th {{ background: #0f172a; color: #cbd5e1; position: sticky; top: 0; z-index: 2; font-weight: 600; border-bottom: 1px solid #334155; }}
+  .cell-cool_blue {{ background: linear-gradient(180deg, rgba(2, 132, 199, 0.28), rgba(3, 105, 161, 0.42)); color: #bae6fd; border: 1px solid rgba(56, 189, 248, 0.15); }}
+  .cell-elevated_amber {{ background: linear-gradient(180deg, rgba(245, 158, 11, 0.45), rgba(217, 119, 6, 0.62)); color: #fef3c7; font-weight: 700; border: 1px solid rgba(251, 191, 36, 0.4); }}
+  .cell-spike_crimson {{ background: linear-gradient(180deg, rgba(239, 68, 68, 0.82), rgba(185, 28, 28, 0.92)); color: #ffffff; font-weight: 700; border: 1px solid rgba(252, 165, 165, 0.65); box-shadow: 0 0 8px rgba(239, 68, 68, 0.45); }}
+  .bar-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 7px; font-size: 0.76rem; font-family: 'JetBrains Mono', Consolas, monospace; }}
+  .bar-track {{ flex: 1; background: rgba(2, 6, 23, 0.9); height: 11px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(30, 41, 59, 0.9); }}
+  .bar-fill {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, #0284c7, #38bdf8, #7dd3fc); box-shadow: 0 0 8px rgba(56, 189, 248, 0.45); }}
+  .bar-fill-align {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, #059669, #10b981, #6ee7b7); box-shadow: 0 0 8px rgba(16, 185, 129, 0.45); }}
+  .bar-fill-slr {{ height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6366f1, #38bdf8, #34d399); box-shadow: 0 0 8px rgba(99, 102, 241, 0.45); }}
+  .legend {{ display: flex; gap: 16px; font-size: 0.75rem; margin-bottom: 10px; color: var(--text-muted); flex-wrap: wrap; }}
+  .dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; box-shadow: 0 0 6px currentColor; }}
   .radar-banner {{
-    padding: 10px 14px;
-    border-radius: 6px;
+    padding: 11px 14px;
+    border-radius: 8px;
     margin-bottom: 10px;
-    font-size: 0.82rem;
-    font-family: monospace;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', Consolas, monospace;
     border: 1px solid #334155;
     background: #020617;
   }}
-  .radar-alert {{ border-color: var(--spike-crimson); background: rgba(239, 68, 68, 0.14); color: #fecaca; }}
-  .radar-ok {{ border-color: var(--accent-emerald); background: rgba(16, 185, 129, 0.12); color: #a7f3d0; }}
-  table.comp-table {{ width: 100%; border-collapse: collapse; font-size: 0.76rem; font-family: monospace; margin-top: 8px; }}
-  table.comp-table th, table.comp-table td {{ border: 1px solid #1e293b; padding: 6px 8px; text-align: left; }}
-  table.comp-table th {{ background: #1e293b; color: var(--text-muted); }}
+  .radar-alert {{ border-color: var(--spike-crimson); background: linear-gradient(90deg, rgba(239, 68, 68, 0.22), rgba(153, 27, 27, 0.12)); color: #fecaca; box-shadow: 0 0 16px rgba(239, 68, 68, 0.2); }}
+  .radar-ok {{ border-color: var(--accent-emerald); background: linear-gradient(90deg, rgba(16, 185, 129, 0.16), rgba(6, 78, 59, 0.1)); color: #a7f3d0; }}
+  table.comp-table {{ width: 100%; border-collapse: collapse; font-size: 0.75rem; font-family: 'JetBrains Mono', Consolas, monospace; margin-top: 8px; border-radius: 8px; overflow: hidden; }}
+  table.comp-table th, table.comp-table td {{ border: 1px solid rgba(30, 41, 59, 0.9); padding: 7px 9px; text-align: left; }}
+  table.comp-table th {{ background: rgba(30, 41, 59, 0.75); color: #cbd5e1; font-weight: 600; }}
+  table.comp-table tr:nth-child(even) {{ background: rgba(15, 23, 42, 0.45); }}
   .workflow-banner {{
-    background: linear-gradient(180deg, #0f172a 0%, #0b1120 100%);
-    border: 1px solid #0284c7;
-    border-radius: 10px;
-    padding: 18px;
-    margin-bottom: 18px;
-    box-shadow: 0 4px 20px rgba(2, 132, 199, 0.12);
+    background: linear-gradient(145deg, rgba(15, 23, 42, 0.94) 0%, rgba(7, 12, 24, 0.97) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 14px 34px -10px rgba(2, 132, 199, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }}
   .wf-steps-grid {{
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-top: 14px;
+    gap: 14px;
+    margin-top: 16px;
+  }}
+  @media (max-width: 1200px) {{
+    .wf-steps-grid {{ grid-template-columns: repeat(2, 1fr); }}
   }}
   .wf-card {{
-    background: #020617;
-    border: 1px solid #1e293b;
+    background: linear-gradient(180deg, rgba(9, 14, 28, 0.95) 0%, rgba(2, 6, 23, 0.95) 100%);
+    border: 1px solid rgba(51, 65, 85, 0.65);
     border-top: 3px solid var(--accent-cyan);
-    border-radius: 7px;
-    padding: 12px;
+    border-radius: 10px;
+    padding: 14px;
     font-size: 0.78rem;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    transition: border-color 0.2s ease, transform 0.2s ease;
+  }}
+  .wf-card:hover {{
+    border-color: rgba(56, 189, 248, 0.6);
+    transform: translateY(-2px);
   }}
   .wf-card h3 {{
-    font-size: 0.82rem;
+    font-size: 0.8rem;
+    letter-spacing: 0.5px;
     color: var(--accent-cyan);
-    margin-bottom: 6px;
+    margin-bottom: 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
   }}
   .wf-input {{
     width: 100%;
-    background: #020617;
+    background: rgba(2, 6, 23, 0.9);
     color: var(--text-main);
-    border: 1px solid #334155;
-    border-radius: 5px;
-    padding: 6px 8px;
-    font-family: monospace;
-    font-size: 0.76rem;
-    margin-bottom: 6px;
+    border: 1px solid rgba(51, 65, 85, 0.8);
+    border-radius: 6px;
+    padding: 6px 9px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
+    font-size: 0.74rem;
+    margin-bottom: 7px;
   }}
+  .wf-input:focus {{ outline: none; border-color: var(--accent-cyan); box-shadow: 0 0 8px rgba(56, 189, 248, 0.25); }}
   .btn-primary {{
-    background: linear-gradient(90deg, #0284c7, #10b981);
+    background: linear-gradient(135deg, #0284c7 0%, #2563eb 50%, #10b981 100%);
     color: #ffffff;
     font-weight: 700;
-    border: none;
-    padding: 9px 16px;
+    border: 1px solid rgba(125, 211, 252, 0.45);
+    padding: 8px 16px;
+    box-shadow: 0 4px 15px rgba(2, 132, 199, 0.35);
   }}
-  .btn-primary:hover {{ opacity: 0.92; }}
+  .btn-primary:hover {{ opacity: 0.96; box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45); }}
   .iso-hero-card {{
-    background: #0b1120;
-    border: 1px solid #1e293b;
-    border-radius: 10px;
-    padding: 18px;
-    margin-bottom: 18px;
+    background: linear-gradient(160deg, rgba(13, 21, 38, 0.96) 0%, rgba(6, 10, 21, 0.98) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 18px 42px -12px rgba(0, 0, 0, 0.75), 0 0 30px rgba(14, 165, 233, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }}
   .iso-stage-wrap {{
     display: grid;
-    grid-template-columns: 1.55fr 1fr;
-    gap: 16px;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 18px;
     align-items: stretch;
   }}
   @media (max-width: 1100px) {{
     .iso-stage-wrap {{ grid-template-columns: 1fr; }}
   }}
   .iso-canvas-box {{
-    background: radial-gradient(circle at 50% 45%, #111c33 0%, #050a14 100%);
-    border: 1px solid #1e293b;
-    border-radius: 8px;
+    background:
+      radial-gradient(ellipse at 50% 42%, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.72) 52%, #030712 100%);
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    border-radius: 12px;
     position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 10px;
+    padding: 12px;
+    box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.75);
+    overflow: hidden;
   }}
   .iso-story-box {{
-    background: #020617;
-    border: 1px solid #1e293b;
-    border-radius: 8px;
-    padding: 16px;
+    background: linear-gradient(180deg, rgba(9, 14, 27, 0.95) 0%, rgba(3, 7, 18, 0.98) 100%);
+    border: 1px solid rgba(51, 65, 85, 0.7);
+    border-radius: 12px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }}
   .iso-pills {{
     display: flex;
-    gap: 6px;
+    gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }}
   .iso-pill {{
-    background: #0f172a;
-    border: 1px solid #334155;
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(71, 85, 105, 0.65);
     color: var(--text-muted);
-    font-size: 0.75rem;
-    padding: 5px 10px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 6px 13px;
     border-radius: 999px;
     cursor: pointer;
+    transition: all 0.18s ease;
+  }}
+  .iso-pill:hover {{
+    color: var(--text-main);
+    border-color: rgba(56, 189, 248, 0.6);
   }}
   .iso-pill.active {{
-    background: rgba(56, 189, 248, 0.16);
+    background: linear-gradient(90deg, rgba(2, 132, 199, 0.32), rgba(16, 185, 129, 0.24));
     border-color: var(--accent-cyan);
-    color: var(--text-main);
+    color: #ffffff;
     font-weight: 700;
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.3);
   }}
   .gantt-row {{
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 5px;
-    font-family: monospace;
+    margin-bottom: 6px;
+    font-family: 'JetBrains Mono', Consolas, monospace;
     font-size: 0.72rem;
   }}
   .gantt-track {{
     flex: 1;
-    height: 15px;
-    background: #0f172a;
-    border-radius: 3px;
+    height: 17px;
+    background: #060c1a;
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 5px;
     display: flex;
     overflow: hidden;
     position: relative;
   }}
-  .gantt-seg {{ height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.62rem; color: #fff; font-weight: 600; }}
+  .gantt-seg {{
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.63rem;
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    border-right: 1px solid rgba(2, 6, 23, 0.5);
+  }}
 </style>
 </head>
 <body>
@@ -1158,7 +1233,7 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
       <canvas id="iso-moe-canvas" width="720" height="400" style="max-width:100%; height:auto;"></canvas>
       <div style="display:flex; gap:14px; font-size:0.73rem; color:var(--text-muted); margin-top:6px; flex-wrap:wrap; justify-content:center;">
         <span><i class="dot" style="background:#38bdf8;"></i>Full-Attention Anchor (`o_proj` Surgical Target)</span>
-        <span><i class="dot" style="background:#10b981;"></i>Null-Space Reflex ($P_\perp$) / Shared Expert</span>
+        <span><i class="dot" style="background:#10b981;"></i>Null-Space Reflex (P<sub>&perp;</sub>) / Shared Expert</span>
         <span><i class="dot" style="background:#f59e0b;"></i>Active Top-8 Routed Experts (Frozen)</span>
         <span><i class="dot" style="background:#ef4444;"></i>Bad Habit Erased (LEACE) / Sentinel Alert</span>
       </div>
@@ -1178,48 +1253,51 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
       </div>
 
       <!-- Synchronized Pipeline Timeline Strip (like the MoE Handbook Video) -->
-      <div style="border-top:1px solid #1e293b; padding-top:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <span style="font-size:0.76rem; font-weight:600; color:var(--text-main);">
-            Synchronized 40-Layer Surgical Pipeline Schedule
+      <div style="border-top:1px solid rgba(51,65,85,0.65); padding-top:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:0.76rem; font-weight:700; color:var(--text-main); letter-spacing:0.3px;">
+            SYNCHRONIZED 40-LAYER SURGICAL PIPELINE SCHEDULE
           </span>
-          <input type="range" id="iso-time-scrubber" min="0" max="100" value="35" style="width:140px;" />
+          <input type="range" id="iso-time-scrubber" min="0" max="100" value="35" style="width:145px;" />
         </div>
-        <div class="gantt-row">
-          <span style="width:68px; color:var(--text-muted);">Stage 1 (L0-9)</span>
-          <div class="gantt-track">
-            <div class="gantt-seg" style="width:28%; background:#0284c7;">Harvest</div>
-            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
-            <div class="gantt-seg" style="width:26%; background:#10b981;">L3/L7 Forge</div>
-            <div class="gantt-seg" style="width:22%; background:#334155;">Verify</div>
+        <div id="gantt-schedule-wrap" style="position:relative;">
+          <div id="gantt-playhead" style="position:absolute; top:0; bottom:0; left:76px; width:2px; background:#38bdf8; box-shadow:0 0 8px #38bdf8; z-index:5; pointer-events:none;"></div>
+          <div class="gantt-row">
+            <span style="width:68px; color:var(--text-muted);">Stage 1 (L0-9)</span>
+            <div class="gantt-track">
+              <div class="gantt-seg" style="width:28%; background:linear-gradient(90deg,#0369a1,#0284c7);">Harvest</div>
+              <div class="gantt-seg" style="width:24%; background:linear-gradient(90deg,#4f46e5,#6366f1);">CFM-12</div>
+              <div class="gantt-seg" style="width:26%; background:linear-gradient(90deg,#059669,#10b981);">L3/L7 Forge</div>
+              <div class="gantt-seg" style="width:22%; background:#1e293b;">Verify</div>
+            </div>
           </div>
-        </div>
-        <div class="gantt-row">
-          <span style="width:68px; color:var(--text-muted);">Stage 2 (L10-19)</span>
-          <div class="gantt-track">
-            <div class="gantt-seg" style="width:12%; background:#1e293b;"></div>
-            <div class="gantt-seg" style="width:26%; background:#0284c7;">Harvest</div>
-            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
-            <div class="gantt-seg" style="width:28%; background:#10b981;">L15/L19 Forge</div>
-            <div class="gantt-seg" style="width:10%; background:#334155;">OK</div>
+          <div class="gantt-row">
+            <span style="width:68px; color:var(--text-muted);">Stage 2 (L10-19)</span>
+            <div class="gantt-track">
+              <div class="gantt-seg" style="width:12%; background:#0f172a;"></div>
+              <div class="gantt-seg" style="width:26%; background:linear-gradient(90deg,#0369a1,#0284c7);">Harvest</div>
+              <div class="gantt-seg" style="width:24%; background:linear-gradient(90deg,#4f46e5,#6366f1);">CFM-12</div>
+              <div class="gantt-seg" style="width:28%; background:linear-gradient(90deg,#059669,#10b981);">L15/L19 Forge</div>
+              <div class="gantt-seg" style="width:10%; background:#1e293b;">OK</div>
+            </div>
           </div>
-        </div>
-        <div class="gantt-row">
-          <span style="width:68px; color:var(--text-muted);">Stage 3 (L20-29)</span>
-          <div class="gantt-track">
-            <div class="gantt-seg" style="width:22%; background:#1e293b;"></div>
-            <div class="gantt-seg" style="width:24%; background:#0284c7;">Harvest</div>
-            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
-            <div class="gantt-seg" style="width:30%; background:#10b981;">L23/L27 Forge</div>
+          <div class="gantt-row">
+            <span style="width:68px; color:var(--text-muted);">Stage 3 (L20-29)</span>
+            <div class="gantt-track">
+              <div class="gantt-seg" style="width:22%; background:#0f172a;"></div>
+              <div class="gantt-seg" style="width:24%; background:linear-gradient(90deg,#0369a1,#0284c7);">Harvest</div>
+              <div class="gantt-seg" style="width:24%; background:linear-gradient(90deg,#4f46e5,#6366f1);">CFM-12</div>
+              <div class="gantt-seg" style="width:30%; background:linear-gradient(90deg,#059669,#10b981);">L23/L27 Forge</div>
+            </div>
           </div>
-        </div>
-        <div class="gantt-row">
-          <span style="width:68px; color:var(--text-muted);">Stage 4 (L30-39)</span>
-          <div class="gantt-track">
-            <div class="gantt-seg" style="width:32%; background:#1e293b;"></div>
-            <div class="gantt-seg" style="width:22%; background:#0284c7;">Harvest</div>
-            <div class="gantt-seg" style="width:22%; background:#ef4444;">LEACE</div>
-            <div class="gantt-seg" style="width:24%; background:#10b981;">L31/L35/L39</div>
+          <div class="gantt-row">
+            <span style="width:68px; color:var(--text-muted);">Stage 4 (L30-39)</span>
+            <div class="gantt-track">
+              <div class="gantt-seg" style="width:32%; background:#0f172a;"></div>
+              <div class="gantt-seg" style="width:22%; background:linear-gradient(90deg,#0369a1,#0284c7);">Harvest</div>
+              <div class="gantt-seg" style="width:22%; background:linear-gradient(90deg,#dc2626,#ef4444);">LEACE</div>
+              <div class="gantt-seg" style="width:24%; background:linear-gradient(90deg,#059669,#10b981);">L31/L35/L39</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1732,7 +1810,62 @@ function isoProject(x, y, z, cx, cy, scale) {{
   return [px, py];
 }}
 
-function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, strokeCol) {{
+function drawIsoBackdropGrid(ctx, W, H) {{
+  ctx.save();
+  // Subtle perspective grid on the floor plane
+  const cx = W * 0.5;
+  const cy = H * 0.62;
+  const scale = 19.5;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.065)';
+  ctx.lineWidth = 1;
+  for (let i = -9; i <= 9; i += 1.5) {{
+    const a1 = isoProject(i, -9, -1.8, cx, cy, scale);
+    const a2 = isoProject(i, 9, -1.8, cx, cy, scale);
+    ctx.beginPath();
+    ctx.moveTo(a1[0], a1[1]);
+    ctx.lineTo(a2[0], a2[1]);
+    ctx.stroke();
+
+    const b1 = isoProject(-9, i, -1.8, cx, cy, scale);
+    const b2 = isoProject(9, i, -1.8, cx, cy, scale);
+    ctx.beginPath();
+    ctx.moveTo(b1[0], b1[1]);
+    ctx.lineTo(b2[0], b2[1]);
+    ctx.stroke();
+  }}
+  ctx.restore();
+}}
+
+function drawIsoLabelTag(ctx, x, y, text, textCol, borderCol, bgCol) {{
+  ctx.save();
+  ctx.font = 'bold 10.5px "JetBrains Mono", Consolas, monospace';
+  const padX = 8;
+  const tw = ctx.measureText(text).width;
+  const bw = tw + padX * 2;
+  const bh = 20;
+  const rx = x - bw * 0.5;
+  const ry = y - bh * 0.5;
+
+  ctx.fillStyle = bgCol || 'rgba(6, 11, 25, 0.88)';
+  ctx.strokeStyle = borderCol || 'rgba(56, 189, 248, 0.55)';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  if (ctx.roundRect) {{
+    ctx.roundRect(rx, ry, bw, bh, 5);
+  }} else {{
+    ctx.rect(rx, ry, bw, bh);
+  }}
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = textCol || '#e2e8f0';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y + 0.5);
+  ctx.restore();
+}}
+
+function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, strokeCol, glowCol) {{
   const p00 = isoProject(-w/2, -d/2, h, cx, cy, scale);
   const p10 = isoProject(w/2, -d/2, h, cx, cy, scale);
   const p11 = isoProject(w/2, d/2, h, cx, cy, scale);
@@ -1741,6 +1874,12 @@ function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, 
   const b10 = isoProject(w/2, -d/2, 0, cx, cy, scale);
   const b11 = isoProject(w/2, d/2, 0, cx, cy, scale);
   const b01 = isoProject(-w/2, d/2, 0, cx, cy, scale);
+
+  ctx.save();
+  if (glowCol) {{
+    ctx.shadowColor = glowCol;
+    ctx.shadowBlur = 14;
+  }}
 
   // Left face
   ctx.beginPath();
@@ -1752,7 +1891,7 @@ function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, 
   ctx.fillStyle = leftFill;
   ctx.fill();
   ctx.strokeStyle = strokeCol;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1.05;
   ctx.stroke();
 
   // Right face
@@ -1766,32 +1905,48 @@ function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, 
   ctx.fill();
   ctx.stroke();
 
-  // Top face
+  // Top face with directional gradient sheen
   ctx.beginPath();
   ctx.moveTo(p00[0], p00[1]);
   ctx.lineTo(p10[0], p10[1]);
   ctx.lineTo(p11[0], p11[1]);
   ctx.lineTo(p01[0], p01[1]);
   ctx.closePath();
-  ctx.fillStyle = topFill;
+  const grad = ctx.createLinearGradient(p00[0], p00[1], p11[0], p11[1]);
+  grad.addColorStop(0, topFill);
+  grad.addColorStop(1, leftFill);
+  ctx.fillStyle = grad;
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
 }}
 
 function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
+  drawIsoBackdropGrid(ctx, W, H);
   const cx = W * 0.5;
-  const cy = H * 0.57;
-  const scale = 20.0;
+  const cy = H * 0.58;
+  const scale = 19.5;
+
+  // Ambient floor halo under pedestal
+  const floorGrad = ctx.createRadialGradient(cx, cy + 20, 15, cx, cy + 20, 210);
+  const haloRGB = mode === 'surgery' ? '16, 185, 129' : (mode === 'sentinel' ? '239, 68, 68' : '56, 189, 248');
+  floorGrad.addColorStop(0, `rgba(${{haloRGB}}, 0.20)`);
+  floorGrad.addColorStop(1, 'rgba(2, 6, 23, 0)');
+  ctx.fillStyle = floorGrad;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 24, 210, 105, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   // Base Node / Pedestal Slab
-  drawIsoSlab(ctx, cx, cy + 28, 12.2, 12.2, 0.9, scale, '#0f172a', '#090f1d', '#060a14', '#1e293b');
+  drawIsoSlab(ctx, cx, cy + 28, 12.2, 12.2, 0.85, scale, '#0f172a', '#090f1d', '#050912', 'rgba(51, 65, 85, 0.7)');
 
   // Main Full-Attention Anchor + 256-Expert Slab
-  const topCol = mode === 'surgery' ? '#0c273d' : (mode === 'sentinel' ? '#24111c' : '#112239');
+  const topCol = mode === 'surgery' ? '#0b2e36' : (mode === 'sentinel' ? '#2c1220' : '#112642');
+  const leftCol = mode === 'surgery' ? '#071d24' : (mode === 'sentinel' ? '#1c0b15' : '#0b192e');
   const strokeCol = mode === 'surgery' ? '#10b981' : (mode === 'sentinel' ? '#ef4444' : '#38bdf8');
-  drawIsoSlab(ctx, cx, cy, 10.6, 10.6, 1.15, scale, topCol, '#0a1829', '#07111e', strokeCol);
+  drawIsoSlab(ctx, cx, cy, 10.6, 10.6, 1.15, scale, topCol, leftCol, '#060f1c', strokeCol, `rgba(${{haloRGB}}, 0.28)`);
 
-  // Draw 16x16 = 256 Routed Experts grid on top of the slab
+  // Draw 16x16 = 256 Routed Experts as 3D micro-pillars on the slab
   const activeTop8 = [18, 42, 77, 105, 134, 179, 211, 244];
   for (let r = 0; r < 16; r++) {{
     for (let c = 0; c < 16; c++) {{
@@ -1800,132 +1955,228 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
       const gy = -4.5 + r * 0.6;
       const pt = isoProject(gx, gy, 1.18, cx, cy, scale);
       const isPicked = activeTop8.includes(expId);
-      ctx.beginPath();
-      ctx.arc(pt[0], pt[1], isPicked ? 3.4 : 1.9, 0, Math.PI * 2);
-      if (isPicked && (mode === 'routing' || mode === 'block')) {{
-        ctx.fillStyle = '#f59e0b';
+      const showActive = isPicked && (mode === 'routing' || mode === 'block');
+
+      if (showActive) {{
+        // Elevated glowing 3D micro-pillar for active Top-8 Routed Experts
+        drawIsoSlab(
+          ctx, pt[0], pt[1],
+          0.42, 0.42, 0.42 + 0.12 * Math.sin(phase * Math.PI * 2 + expId),
+          scale, '#fbbf24', '#d97706', '#92400e', '#fef08a', 'rgba(245, 158, 11, 0.6)'
+        );
       }} else {{
-        ctx.fillStyle = '#334155';
+        // Frozen expert micro-tile
+        ctx.beginPath();
+        ctx.arc(pt[0], pt[1], 2.0, 0, Math.PI * 2);
+        ctx.fillStyle = mode === 'surgery' ? 'rgba(56, 189, 248, 0.32)' : 'rgba(71, 85, 105, 0.55)';
+        ctx.fill();
       }}
-      ctx.fill();
     }}
   }}
 
   // Draw Shared Expert + Full-Attention o_proj Anchor Pillar (Left-Top)
-  const shPos = isoProject(-6.2, -2.5, 1.15, cx, cy, scale);
-  drawIsoSlab(ctx, shPos[0], shPos[1], 2.2, 2.2, 1.4, scale * 0.75, '#065f46', '#064e3b', '#042f2e', '#10b981');
-  ctx.fillStyle = '#6ee7b7';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText('Full-Attn Anchor (L23) + Shared Exp', shPos[0] - 95, shPos[1] - 32);
+  const shPos = isoProject(-6.35, -2.6, 1.15, cx, cy, scale);
+  drawIsoSlab(
+    ctx, shPos[0], shPos[1],
+    2.25, 2.25, 1.55, scale * 0.76,
+    '#10b981', '#059669', '#064e3b', '#6ee7b7', 'rgba(16, 185, 129, 0.45)'
+  );
+  drawIsoLabelTag(
+    ctx, shPos[0] - 48, shPos[1] - 48,
+    'Full-Attn Anchor (L23) + Shared Exp',
+    '#6ee7b7', 'rgba(16, 185, 129, 0.7)'
+  );
 
   // Draw Virtual Auditor Expert #-1 Pillar (Right-Top)
-  const auPos = isoProject(6.2, -2.5, 1.15, cx, cy, scale);
-  const auTop = mode === 'sentinel' ? '#991b1b' : '#1e1b4b';
-  const auBorder = mode === 'sentinel' ? '#ef4444' : '#818cf8';
-  drawIsoSlab(ctx, auPos[0], auPos[1], 2.2, 2.2, 1.4, scale * 0.75, auTop, '#1e1b4b', '#0f172a', auBorder);
-  ctx.fillStyle = mode === 'sentinel' ? '#fca5a5' : '#a5b4fc';
-  ctx.fillText('Auditor Expert #-1 (Null-Space)', auPos[0] - 75, auPos[1] - 32);
+  const auPos = isoProject(6.35, -2.6, 1.15, cx, cy, scale);
+  const auTop = mode === 'sentinel' ? '#ef4444' : '#4f46e5';
+  const auLeft = mode === 'sentinel' ? '#b91c1c' : '#3730a3';
+  const auBorder = mode === 'sentinel' ? '#fca5a5' : '#818cf8';
+  const auGlow = mode === 'sentinel' ? 'rgba(239, 68, 68, 0.55)' : 'rgba(99, 102, 241, 0.35)';
+  drawIsoSlab(
+    ctx, auPos[0], auPos[1],
+    2.25, 2.25, 1.55, scale * 0.76,
+    auTop, auLeft, '#1e1b4b', auBorder, auGlow
+  );
+  drawIsoLabelTag(
+    ctx, auPos[0] + 36, auPos[1] - 46,
+    'Auditor Expert #-1 (Null-Space)',
+    mode === 'sentinel' ? '#fecaca' : '#c7d2fe', auBorder
+  );
 
-  // Incoming Token Origin above slab
-  const tokPt = isoProject(0, 0, 5.2, cx, cy, scale);
+  // Incoming Token Origin Orb above slab
+  const tokPt = isoProject(0, 0, 5.75, cx, cy, scale);
+  const orbCol = mode === 'sentinel' ? '#ef4444' : '#38bdf8';
+  ctx.save();
+  ctx.shadowColor = orbCol;
+  ctx.shadowBlur = 18;
   ctx.beginPath();
-  ctx.arc(tokPt[0], tokPt[1], 7, 0, Math.PI * 2);
-  ctx.fillStyle = mode === 'sentinel' ? '#ef4444' : '#38bdf8';
+  ctx.arc(tokPt[0], tokPt[1], 7.5, 0, Math.PI * 2);
+  ctx.fillStyle = orbCol;
   ctx.fill();
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillText(mode === 'sentinel' ? 'Adversarial / OOD Spike Token' : 'Incoming Agent Token (h_t)', tokPt[0] - 78, tokPt[1] - 14);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  drawIsoLabelTag(
+    ctx, tokPt[0] + 18, tokPt[1] - 26,
+    mode === 'sentinel' ? 'Adversarial / OOD Spike Token (h_t)' : 'Incoming Agent Token (h_t)',
+    mode === 'sentinel' ? '#fecaca' : '#bae6fd',
+    mode === 'sentinel' ? 'rgba(239,68,68,0.75)' : 'rgba(56,189,248,0.75)'
+  );
 
   // Mode-specific animated trajectories
   if (mode === 'block' || mode === 'routing') {{
+    // Also draw beam to Shared Expert / Anchor
+    ctx.beginPath();
+    ctx.moveTo(tokPt[0], tokPt[1]);
+    ctx.quadraticCurveTo((tokPt[0] + shPos[0]) * 0.5, tokPt[1] - 18, shPos[0], shPos[1] - 16);
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.65)';
+    ctx.lineWidth = 2.0;
+    ctx.stroke();
+
     for (let i = 0; i < activeTop8.length; i++) {{
       const expId = activeTop8[i];
       const r = Math.floor(expId / 16);
       const c = expId % 16;
       const gx = -4.5 + c * 0.6;
       const gy = -4.5 + r * 0.6;
-      const dst = isoProject(gx, gy, 1.2, cx, cy, scale);
+      const dst = isoProject(gx, gy, 1.45, cx, cy, scale);
 
       ctx.beginPath();
       ctx.moveTo(tokPt[0], tokPt[1]);
       const ctrlX = (tokPt[0] + dst[0]) * 0.5;
-      const ctrlY = Math.min(tokPt[1], dst[1]) - 28;
+      const ctrlY = Math.min(tokPt[1], dst[1]) - 32;
       ctx.quadraticCurveTo(ctrlX, ctrlY, dst[0], dst[1]);
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.48)';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.52)';
+      ctx.lineWidth = 1.6;
       ctx.stroke();
 
-      // Traveling token copy dot along quadratic curve
+      // Traveling token copy dot along quadratic curve with glow
       const t = (phase + i * 0.11) % 1.0;
       const bx = (1-t)*(1-t)*tokPt[0] + 2*(1-t)*t*ctrlX + t*t*dst[0];
       const by = (1-t)*(1-t)*tokPt[1] + 2*(1-t)*t*ctrlY + t*t*dst[1];
+      ctx.save();
+      ctx.shadowColor = '#fde047';
+      ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.arc(bx, by, 3.2, 0, Math.PI * 2);
-      ctx.fillStyle = '#fde047';
+      ctx.arc(bx, by, 3.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#fef08a';
       ctx.fill();
+      ctx.restore();
     }}
+    drawIsoLabelTag(
+      ctx, cx, H - 18,
+      'Top-8 Routed Experts Active (Amber) + 248 Dormant | All 256 Frozen During Surgery',
+      '#fde68a', 'rgba(245, 158, 11, 0.55)'
+    );
   }} else if (mode === 'surgery') {{
-    // 1. Crimson LEACE wave erasing 3-axis bad habit on Anchor
-    const waveR = 14 + (phase * 48);
-    ctx.beginPath();
-    ctx.ellipse(shPos[0], shPos[1] - 8, waveR, waveR * 0.55, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(239, 68, 68, ${{1.0 - phase}})`;
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
+    // 1. Multi-ring Crimson LEACE wave erasing 3-axis bad habit on Anchor
+    for (let ring = 0; ring < 2; ring++) {{
+      const pRing = (phase + ring * 0.5) % 1.0;
+      const waveR = 14 + (pRing * 56);
+      ctx.beginPath();
+      ctx.ellipse(shPos[0], shPos[1] - 12, waveR, waveR * 0.55, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(239, 68, 68, ${{(1.0 - pRing) * 0.85}})`;
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+    }}
 
     // 2. Emerald Null-Space P_perp surgical laser locking reflex into Anchor while 256 experts stay frozen
+    ctx.save();
+    ctx.shadowColor = '#10b981';
+    ctx.shadowBlur = 14;
     ctx.beginPath();
     ctx.moveTo(tokPt[0], tokPt[1]);
-    ctx.lineTo(shPos[0], shPos[1] - 10);
-    ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 3.2;
+    ctx.lineTo(shPos[0], shPos[1] - 16);
+    ctx.strokeStyle = '#34d399';
+    ctx.lineWidth = 3.5;
     ctx.stroke();
+    ctx.restore();
 
-    ctx.fillStyle = '#34d399';
-    ctx.fillText('LEACE Bad-Habit Erased + P_perp Reflex Injected (Syntax K0 Leak = 0.0)', cx - 195, H - 14);
+    drawIsoLabelTag(
+      ctx, cx, H - 18,
+      'LEACE Bad-Habit Erased + P_perp Reflex Injected (Syntax K0 Leak = 0.0)',
+      '#6ee7b7', 'rgba(16, 185, 129, 0.75)'
+    );
   }} else if (mode === 'sentinel') {{
     // Crimson spike intercepted midway and rerouted to Auditor Expert #-1
-    const midPt = [cx + 22, cy - 55];
+    const midPt = [cx + 22, cy - 58];
+    ctx.save();
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 12;
     ctx.beginPath();
     ctx.moveTo(tokPt[0], tokPt[1]);
     ctx.lineTo(midPt[0], midPt[1]);
     ctx.strokeStyle = '#ef4444';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.2;
     ctx.stroke();
 
+    // Shield ring at interception point
+    ctx.beginPath();
+    ctx.arc(midPt[0], midPt[1], 8 + 4 * Math.sin(phase * Math.PI * 2), 0, Math.PI * 2);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 2.0;
+    ctx.stroke();
+
+    ctx.shadowColor = '#10b981';
     ctx.beginPath();
     ctx.moveTo(midPt[0], midPt[1]);
-    ctx.lineTo(auPos[0], auPos[1] - 12);
+    ctx.lineTo(auPos[0], auPos[1] - 16);
     ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.2;
     ctx.stroke();
+    ctx.restore();
 
     const t = phase;
     const px = t < 0.5 ? tokPt[0] + (midPt[0]-tokPt[0])*(t*2) : midPt[0] + (auPos[0]-midPt[0])*((t-0.5)*2);
-    const py = t < 0.5 ? tokPt[1] + (midPt[1]-tokPt[1])*(t*2) : midPt[1] + (auPos[1]-12-midPt[1])*((t-0.5)*2);
+    const py = t < 0.5 ? tokPt[1] + (midPt[1]-tokPt[1])*(t*2) : midPt[1] + (auPos[1]-16-midPt[1])*((t-0.5)*2);
     ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
-    ctx.fillStyle = t < 0.5 ? '#ef4444' : '#10b981';
+    ctx.arc(px, py, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = t < 0.5 ? '#ef4444' : '#34d399';
     ctx.fill();
 
-    ctx.fillStyle = '#fca5a5';
-    ctx.fillText('SENTINEL INTERCEPT: Rerouted to Auditor #-1 (256 Routed Experts Shielded)', cx - 210, H - 14);
+    drawIsoLabelTag(
+      ctx, cx, H - 18,
+      'SENTINEL INTERCEPT: Rerouted to Auditor #-1 (256 Routed Experts Shielded)',
+      '#fecaca', 'rgba(239, 68, 68, 0.75)'
+    );
   }}
 }}
 
 function drawFourStageClusterScene(ctx, W, H, phase) {{
+  drawIsoBackdropGrid(ctx, W, H);
   // Mirrors the 4-Diamond Isometric Pipeline Stage layout from the MoE Handbook video!
-  const scale = 11.5;
+  const scale = 11.2;
   const stageCenters = [
-    {{ x: W * 0.50, y: H * 0.25, label: 'PIPELINE STAGE 1 (Layers 0-9)', startL: 0 }},
-    {{ x: W * 0.74, y: H * 0.48, label: 'PIPELINE STAGE 2 (Layers 10-19)', startL: 10 }},
-    {{ x: W * 0.50, y: H * 0.72, label: 'PIPELINE STAGE 3 (Layers 20-29)', startL: 20 }},
-    {{ x: W * 0.26, y: H * 0.48, label: 'PIPELINE STAGE 4 (Layers 30-39)', startL: 30 }}
+    {{ x: W * 0.50, y: H * 0.23, label: 'STAGE 1 (Layers 0-9)', startL: 0 }},
+    {{ x: W * 0.75, y: H * 0.47, label: 'STAGE 2 (Layers 10-19)', startL: 10 }},
+    {{ x: W * 0.50, y: H * 0.71, label: 'STAGE 3 (Layers 20-29)', startL: 20 }},
+    {{ x: W * 0.25, y: H * 0.47, label: 'STAGE 4 (Layers 30-39)', startL: 30 }}
   ];
   const fullAttn = [3, 7, 11, 15, 19, 23, 27, 31, 35, 39];
+  const topDiscovered = [15, 19, 23];
+
+  // Draw glowing data-bus conduits connecting Stage 1 -> 2 -> 3 -> 4
+  ctx.save();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  for (let s = 0; s < 4; s++) {{
+    const pA = stageCenters[s];
+    const pB = stageCenters[(s + 1) % 4];
+    if (s === 0) ctx.moveTo(pA.x, pA.y);
+    ctx.lineTo(pB.x, pB.y);
+  }}
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
 
   for (let s = 0; s < 4; s++) {{
     const sc = stageCenters[s];
-    drawIsoSlab(ctx, sc.x, sc.y, 11.0, 11.0, 0.7, scale, '#0b1528', '#070e1b', '#050a14', '#1e293b');
+    drawIsoSlab(ctx, sc.x, sc.y, 11.2, 11.2, 0.72, scale, '#0d1b32', '#081121', '#050a14', 'rgba(56, 189, 248, 0.35)');
 
     // Draw 10 layers (2 rows x 5 columns of mini layer-slabs inside each pipeline diamond)
     for (let li = 0; li < 10; li++) {{
@@ -1936,32 +2187,40 @@ function drawFourStageClusterScene(ctx, W, H, phase) {{
       const ly = -2.2 + row * 4.2;
       const pt = isoProject(lx, ly, 0.75, sc.x, sc.y, scale);
       const isAnchor = fullAttn.includes(layerNum);
-      const topC = isAnchor ? '#0284c7' : '#1e293b';
-      const brdC = isAnchor ? '#38bdf8' : '#334155';
-      drawIsoSlab(ctx, pt[0], pt[1], 1.45, 2.6, isAnchor ? 0.65 : 0.32, scale, topC, '#0f172a', '#090d16', brdC);
+      const isTop3 = topDiscovered.includes(layerNum);
+      const topC = isTop3 ? '#10b981' : (isAnchor ? '#0284c7' : '#1e293b');
+      const leftC = isTop3 ? '#059669' : (isAnchor ? '#0369a1' : '#0f172a');
+      const brdC = isTop3 ? '#6ee7b7' : (isAnchor ? '#38bdf8' : '#334155');
+      const hSlab = isTop3 ? 0.85 : (isAnchor ? 0.68 : 0.30);
+      drawIsoSlab(ctx, pt[0], pt[1], 1.45, 2.6, hSlab, scale, topC, leftC, '#090d16', brdC, isTop3 ? 'rgba(16,185,129,0.5)' : null);
       if (isAnchor) {{
-        ctx.fillStyle = '#e0f2fe';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText(`L${{layerNum}}`, pt[0] - 9, pt[1] - 6);
+        ctx.fillStyle = isTop3 ? '#ecfdf5' : '#e0f2fe';
+        ctx.font = 'bold 9.5px "JetBrains Mono", Consolas, monospace';
+        ctx.fillText(`L${{layerNum}}`, pt[0] - 9, pt[1] - 7);
       }}
     }}
 
-    ctx.fillStyle = '#94a3b8';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText(sc.label, sc.x - 78, sc.y + 72);
+    drawIsoLabelTag(ctx, sc.x, sc.y + 68, sc.label, '#cbd5e1', 'rgba(71, 85, 105, 0.75)');
   }}
 
-  // Animated activation flow arc cycling Stage 1 -> Stage 2 -> Stage 3 -> Stage 4
+  // Animated activation flow orb cycling Stage 1 -> Stage 2 -> Stage 3 -> Stage 4
   const seg = Math.floor(phase * 4) % 4;
   const subT = (phase * 4) % 1.0;
   const pA = stageCenters[seg];
   const pB = stageCenters[(seg + 1) % 4];
   const curX = pA.x + (pB.x - pA.x) * subT;
   const curY = pA.y + (pB.y - pA.y) * subT;
+  ctx.save();
+  ctx.shadowColor = '#34d399';
+  ctx.shadowBlur = 14;
   ctx.beginPath();
-  ctx.arc(curX, curY - 12, 5.5, 0, Math.PI * 2);
+  ctx.arc(curX, curY - 12, 6.0, 0, Math.PI * 2);
   ctx.fillStyle = '#10b981';
   ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
 }}
 
 function drawIsoCanvas() {{
@@ -1976,6 +2235,10 @@ function drawIsoCanvas() {{
   document.getElementById('iso-clock-label').textContent = `t = ${{(phase * 1.80).toFixed(2)}} s`;
   if (isoPlaying) {{
     document.getElementById('iso-time-scrubber').value = Math.round(phase * 100);
+  }}
+  const playhead = document.getElementById('gantt-playhead');
+  if (playhead) {{
+    playhead.style.left = `calc(76px + (100% - 76px) * ${{phase.toFixed(3)}})`;
   }}
 
   if (isoChapter === 0) {{
