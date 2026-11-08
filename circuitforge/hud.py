@@ -866,6 +866,7 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CircuitForge :: Real-Time Mechanistic Telemetry HUD</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g1' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2338bdf8'/%3E%3Cstop offset='100%25' stop-color='%230284c7'/%3E%3C/linearGradient%3E%3ClinearGradient id='g2' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2310b981'/%3E%3Cstop offset='100%25' stop-color='%23059669'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='%23030712' stroke='%2338bdf8' stroke-width='2'/%3E%3Cpolygon points='32,8 54,21 32,34 10,21' fill='url(%23g1)'/%3E%3Cpolygon points='10,21 32,34 32,56 10,43' fill='%230369a1'/%3E%3Cpolygon points='54,21 32,34 32,56 54,43' fill='url(%23g2)'/%3E%3Ccircle cx='32' cy='21' r='4.5' fill='%23ffffff'/%3E%3Cpath d='M32 21 L32 45 M20 27 L32 34 L44 27' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E" />
 <style>
   :root {{
     --bg-dark: #030712;
@@ -881,7 +882,33 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     --accent-emerald: #10b981;
     --accent-indigo: #818cf8;
   }}
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  * {{
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    scrollbar-width: thin;
+    scrollbar-color: #0284c7 #030712;
+  }}
+  ::-webkit-scrollbar {{
+    width: 10px;
+    height: 10px;
+  }}
+  ::-webkit-scrollbar-track {{
+    background: #030712;
+    border-radius: 8px;
+    border: 1px solid rgba(30, 41, 59, 0.85);
+  }}
+  ::-webkit-scrollbar-thumb {{
+    background: linear-gradient(180deg, #0284c7 0%, #38bdf8 50%, #10b981 100%);
+    border-radius: 8px;
+    border: 2px solid #030712;
+  }}
+  ::-webkit-scrollbar-thumb:hover {{
+    background: linear-gradient(180deg, #38bdf8 0%, #10b981 100%);
+  }}
+  ::-webkit-scrollbar-corner {{
+    background: #030712;
+  }}
   body {{
     background:
       radial-gradient(circle at 15% 5%, rgba(14, 165, 233, 0.11) 0%, transparent 40%),
@@ -1233,13 +1260,91 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     letter-spacing: 0.3px;
     border-right: 1px solid rgba(2, 6, 23, 0.5);
   }}
+  .brand-wrap {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }}
+  .brand-logo {{
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.45));
+    transition: transform 0.25s ease;
+  }}
+  .brand-logo:hover {{
+    transform: scale(1.06) rotate(-3deg);
+  }}
+  .panel.heatmap-fullscreen {{
+    position: fixed !important;
+    inset: 14px !important;
+    z-index: 9999 !important;
+    background: linear-gradient(180deg, rgba(7, 12, 24, 0.99) 0%, rgba(2, 6, 18, 0.99) 100%) !important;
+    border: 1px solid rgba(56, 189, 248, 0.65) !important;
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.92), 0 0 30px rgba(56, 189, 248, 0.2) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    padding: 20px 24px !important;
+  }}
+  .panel.heatmap-fullscreen .heatmap-wrap {{
+    max-height: none !important;
+    flex: 1 !important;
+  }}
+  .panel.heatmap-fullscreen table.heatmap {{
+    font-size: 0.78rem !important;
+  }}
+  .panel.heatmap-fullscreen table.heatmap th,
+  .panel.heatmap-fullscreen table.heatmap td {{
+    padding: 5px 8px !important;
+  }}
+  .fs-toolbar {{
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.95) 0%, rgba(9, 18, 36, 0.95) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.4);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  }}
+  .panel.heatmap-fullscreen .fs-toolbar {{
+    display: flex;
+  }}
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <div class="brand">CIRCUITFORGE // MECHANISTIC TELEMETRY HUD &amp; IN-WEIGHTS AGENT WORKBENCH</div>
-    <div style="font-size:0.8rem; color:var(--text-muted);" id="subtitle">Loading architecture profile...</div>
+  <div class="brand-wrap">
+    <svg class="brand-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="cfLogoTop" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#7dd3fc" />
+          <stop offset="100%" stop-color="#0284c7" />
+        </linearGradient>
+        <linearGradient id="cfLogoRight" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#34d399" />
+          <stop offset="100%" stop-color="#059669" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="14" fill="#050b18" stroke="rgba(56,189,248,0.65)" stroke-width="2" />
+      <!-- 3D Isometric Cube Anvil / Tensor Core -->
+      <polygon points="32,9 54,21.5 32,34 10,21.5" fill="url(#cfLogoTop)" />
+      <polygon points="10,21.5 32,34 32,55 10,42.5" fill="#0369a1" />
+      <polygon points="54,21.5 32,34 32,55 54,42.5" fill="url(#cfLogoRight)" />
+      <!-- Glowing Null-Space Circuit Traces & Nodes -->
+      <path d="M21 15.5 L32 21.5 L43 15.5 M32 21.5 L32 46" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" opacity="0.9" fill="none" />
+      <circle cx="32" cy="21.5" r="4.2" fill="#ffffff" />
+      <circle cx="21" cy="15.5" r="2.5" fill="#bae6fd" />
+      <circle cx="43" cy="15.5" r="2.5" fill="#6ee7b7" />
+      <circle cx="32" cy="46" r="2.8" fill="#34d399" />
+    </svg>
+    <div>
+      <div class="brand">CIRCUITFORGE // MECHANISTIC TELEMETRY HUD &amp; IN-WEIGHTS AGENT WORKBENCH</div>
+      <div style="font-size:0.8rem; color:var(--text-muted);" id="subtitle">Loading architecture profile...</div>
+    </div>
   </div>
   <div style="display:flex; gap:10px; align-items:center;">
     <span class="badge" id="engine-badge">C++ SIMD RINGBUF</span>
@@ -1442,8 +1547,42 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
   </div>
 
   <!-- Color-Coded Activation Heatmap -->
-  <div class="panel">
-    <h2>2. Color-Coded Layer &times; Token Activation Heatmap</h2>
+  <div class="panel" id="heatmap-panel">
+    <h2>
+      <span>2. Color-Coded Layer &times; Token Activation Heatmap</span>
+      <button id="heatmap-fs-btn" style="padding:4px 11px; font-size:0.74rem; border-color:rgba(56,189,248,0.5); color:#7dd3fc;">&#9974; Full Screen</button>
+    </h2>
+
+    <!-- Interactive Steering Dock inside Full-Screen Heatmap Mode -->
+    <div class="fs-toolbar" id="heatmap-fs-toolbar">
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <div style="min-width:230px;">
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:2px;">
+            Live Steering Multiplier (&alpha;): <strong id="fs-alpha-val" style="color:var(--accent-cyan);">1.50</strong>
+          </label>
+          <input type="range" id="fs-alpha-slider" min="-2.0" max="5.0" step="0.1" value="1.5" style="width:220px;" />
+        </div>
+        <div>
+          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:2px;">Schedule:</label>
+          <select id="fs-schedule-select" style="padding:5px 10px; font-size:0.76rem;">
+            <option value="bell">Bell Curve (Sine-Squared Peak)</option>
+            <option value="uniform">Uniform Across Anchors</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+          <button id="fs-apply-btn" class="btn-primary" style="padding:6px 13px; font-size:0.76rem;">Apply Null-Space Steering</button>
+          <button id="fs-reset-btn" style="padding:6px 11px; font-size:0.76rem;">Zero (&alpha;=0)</button>
+        </div>
+      </div>
+      <div style="flex:1; min-width:260px; max-width:540px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:0.73rem; color:var(--text-muted);">Live Behavioral Reflex Output:</span>
+          <span id="fs-compliance-badge" style="font-size:0.75rem; font-weight:700; color:var(--accent-emerald);"></span>
+        </div>
+        <div class="output-box" id="fs-output-preview" style="margin-top:4px; padding:6px 10px; font-size:0.72rem;"></div>
+      </div>
+    </div>
+
     <div class="legend">
       <span><i class="dot" style="background:#0284c7;"></i>Cool Blue (Baseline &le;1.35x)</span>
       <span><i class="dot" style="background:#f59e0b;"></i>Elevated Amber (1.35x..2.25x)</span>
@@ -1522,6 +1661,18 @@ function renderHUD(state) {{
     `Status: ${{state.predicted_output.compliance_status}}`;
   document.getElementById('output-preview').textContent =
     state.predicted_output.tool_call_preview;
+
+  // Sync Full-Screen Heatmap interactive steering dock
+  const fsAlphaVal = document.getElementById('fs-alpha-val');
+  if (fsAlphaVal) {{
+    fsAlphaVal.textContent = Number(state.controls.global_alpha).toFixed(2);
+    document.getElementById('fs-alpha-slider').value = state.controls.global_alpha;
+    document.getElementById('fs-schedule-select').value = state.controls.schedule;
+    document.getElementById('fs-compliance-badge').textContent =
+      `Status: ${{state.predicted_output.compliance_status}}`;
+    document.getElementById('fs-output-preview').textContent =
+      state.predicted_output.tool_call_preview;
+  }}
 
   // Render Heatmap
   const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1691,7 +1842,13 @@ async function pushSteer(alphaVal, schedVal) {{
 }}
 
 document.getElementById('alpha-slider').addEventListener('input', (e) => {{
-  document.getElementById('alpha-val').textContent = parseFloat(e.target.value).toFixed(2);
+  const v = parseFloat(e.target.value).toFixed(2);
+  document.getElementById('alpha-val').textContent = v;
+  const fsVal = document.getElementById('fs-alpha-val');
+  if (fsVal) {{
+    fsVal.textContent = v;
+    document.getElementById('fs-alpha-slider').value = e.target.value;
+  }}
 }});
 document.getElementById('apply-btn').addEventListener('click', () => {{
   pushSteer(document.getElementById('alpha-slider').value, document.getElementById('schedule-select').value);
@@ -1699,6 +1856,39 @@ document.getElementById('apply-btn').addEventListener('click', () => {{
 document.getElementById('reset-btn').addEventListener('click', () => {{
   document.getElementById('alpha-slider').value = 0.0;
   pushSteer(0.0, document.getElementById('schedule-select').value);
+}});
+
+// Full-Screen Heatmap Toggle & Live Interactive Controls
+const hmPanel = document.getElementById('heatmap-panel');
+const hmFsBtn = document.getElementById('heatmap-fs-btn');
+function toggleHeatmapFullScreen() {{
+  const isFs = hmPanel.classList.toggle('heatmap-fullscreen');
+  hmFsBtn.innerHTML = isFs ? '&#10006; Exit Full Screen (Esc)' : '&#9974; Full Screen';
+}}
+hmFsBtn.addEventListener('click', toggleHeatmapFullScreen);
+document.addEventListener('keydown', (e) => {{
+  if (e.key === 'Escape' && hmPanel.classList.contains('heatmap-fullscreen')) {{
+    toggleHeatmapFullScreen();
+  }}
+}});
+document.getElementById('fs-alpha-slider').addEventListener('input', (e) => {{
+  const v = parseFloat(e.target.value).toFixed(2);
+  document.getElementById('fs-alpha-val').textContent = v;
+  document.getElementById('alpha-val').textContent = v;
+  document.getElementById('alpha-slider').value = e.target.value;
+  pushSteer(e.target.value, document.getElementById('fs-schedule-select').value);
+}});
+document.getElementById('fs-schedule-select').addEventListener('change', (e) => {{
+  document.getElementById('schedule-select').value = e.target.value;
+  pushSteer(document.getElementById('fs-alpha-slider').value, e.target.value);
+}});
+document.getElementById('fs-apply-btn').addEventListener('click', () => {{
+  pushSteer(document.getElementById('fs-alpha-slider').value, document.getElementById('fs-schedule-select').value);
+}});
+document.getElementById('fs-reset-btn').addEventListener('click', () => {{
+  document.getElementById('fs-alpha-slider').value = 0.0;
+  document.getElementById('alpha-slider').value = 0.0;
+  pushSteer(0.0, document.getElementById('fs-schedule-select').value);
 }});
 
 async function triggerSpike(attackType) {{
