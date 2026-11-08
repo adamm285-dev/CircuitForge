@@ -1039,6 +1039,81 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     padding: 9px 16px;
   }}
   .btn-primary:hover {{ opacity: 0.92; }}
+  .iso-hero-card {{
+    background: #0b1120;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }}
+  .iso-stage-wrap {{
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: 16px;
+    align-items: stretch;
+  }}
+  @media (max-width: 1100px) {{
+    .iso-stage-wrap {{ grid-template-columns: 1fr; }}
+  }}
+  .iso-canvas-box {{
+    background: radial-gradient(circle at 50% 45%, #111c33 0%, #050a14 100%);
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+  }}
+  .iso-story-box {{
+    background: #020617;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }}
+  .iso-pills {{
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }}
+  .iso-pill {{
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+  }}
+  .iso-pill.active {{
+    background: rgba(56, 189, 248, 0.16);
+    border-color: var(--accent-cyan);
+    color: var(--text-main);
+    font-weight: 700;
+  }}
+  .gantt-row {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+    font-family: monospace;
+    font-size: 0.72rem;
+  }}
+  .gantt-track {{
+    flex: 1;
+    height: 15px;
+    background: #0f172a;
+    border-radius: 3px;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+  }}
+  .gantt-seg {{ height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.62rem; color: #fff; font-weight: 600; }}
 </style>
 </head>
 <body>
@@ -1052,6 +1127,105 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     <span class="badge" id="step-badge">STEP 0</span>
   </div>
 </header>
+
+<!-- INTERACTIVE 3D ISOMETRIC HYBRID-MOE ARCHITECTURE & SURGICAL FORGE STAGE -->
+<div class="iso-hero-card">
+  <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px;">
+    <div>
+      <div style="font-size:1.05rem; font-weight:700; color:var(--accent-cyan);">
+        3D ISOMETRIC HYBRID-MOE &amp; IN-WEIGHTS SURGICAL FORGE EXPLORER
+      </div>
+      <div style="font-size:0.8rem; color:var(--text-muted);">
+        Interactive 3D anatomical view of <strong>Qwen3.6-35B-A3B</strong> (40 Layers = 4 Pipeline Stages &times; 10 Layers, 256 Frozen Routed Experts + 1 Shared Expert + Auditor Expert #-1).
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button id="iso-play-btn" class="btn-primary" style="padding:6px 14px;">&#9208; Pause Animation</button>
+      <button id="iso-next-btn">Next Chapter &rarr;</button>
+    </div>
+  </div>
+
+  <div class="iso-pills" id="iso-chapter-pills">
+    <button class="iso-pill active" data-ch="0">1. Single MoE Block (256 Routed + Shared + Auditor #-1)</button>
+    <button class="iso-pill" data-ch="1">2. Token Routing &amp; Entropy Balance (Top-8 Dispatch)</button>
+    <button class="iso-pill" data-ch="2">3. CFM-12 Causal Sweeper (40-Layer Hybrid Stack)</button>
+    <button class="iso-pill" data-ch="3">4. Surgical Forge (Multi-Axis LEACE + Null-Space P&perp;)</button>
+    <button class="iso-pill" data-ch="4">5. Sentinel Circuit-Breaker (Spike &rarr; Auditor #-1)</button>
+  </div>
+
+  <div class="iso-stage-wrap">
+    <div class="iso-canvas-box">
+      <canvas id="iso-moe-canvas" width="720" height="400" style="max-width:100%; height:auto;"></canvas>
+      <div style="display:flex; gap:14px; font-size:0.73rem; color:var(--text-muted); margin-top:6px; flex-wrap:wrap; justify-content:center;">
+        <span><i class="dot" style="background:#38bdf8;"></i>Full-Attention Anchor (`o_proj` Surgical Target)</span>
+        <span><i class="dot" style="background:#10b981;"></i>Null-Space Reflex ($P_\perp$) / Shared Expert</span>
+        <span><i class="dot" style="background:#f59e0b;"></i>Active Top-8 Routed Experts (Frozen)</span>
+        <span><i class="dot" style="background:#ef4444;"></i>Bad Habit Erased (LEACE) / Sentinel Alert</span>
+      </div>
+    </div>
+
+    <div class="iso-story-box">
+      <div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span class="badge" id="iso-ch-badge">CHAPTER 1 OF 5</span>
+          <span style="font-size:0.75rem; color:var(--text-muted); font-family:monospace;" id="iso-clock-label">t = 0.00 s</span>
+        </div>
+        <h3 id="iso-ch-title" style="font-size:1.05rem; color:var(--text-main); margin-bottom:8px;">
+          Inside One Qwen3.6 Hybrid MoE Block
+        </h3>
+        <p id="iso-ch-desc" style="font-size:0.83rem; color:var(--text-muted); line-height:1.5; margin-bottom:12px;"></p>
+        <div id="iso-ch-Callout" class="output-box" style="font-size:0.76rem; color:var(--accent-cyan); margin-bottom:14px;"></div>
+      </div>
+
+      <!-- Synchronized Pipeline Timeline Strip (like the MoE Handbook Video) -->
+      <div style="border-top:1px solid #1e293b; padding-top:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:0.76rem; font-weight:600; color:var(--text-main);">
+            Synchronized 40-Layer Surgical Pipeline Schedule
+          </span>
+          <input type="range" id="iso-time-scrubber" min="0" max="100" value="35" style="width:140px;" />
+        </div>
+        <div class="gantt-row">
+          <span style="width:68px; color:var(--text-muted);">Stage 1 (L0-9)</span>
+          <div class="gantt-track">
+            <div class="gantt-seg" style="width:28%; background:#0284c7;">Harvest</div>
+            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
+            <div class="gantt-seg" style="width:26%; background:#10b981;">L3/L7 Forge</div>
+            <div class="gantt-seg" style="width:22%; background:#334155;">Verify</div>
+          </div>
+        </div>
+        <div class="gantt-row">
+          <span style="width:68px; color:var(--text-muted);">Stage 2 (L10-19)</span>
+          <div class="gantt-track">
+            <div class="gantt-seg" style="width:12%; background:#1e293b;"></div>
+            <div class="gantt-seg" style="width:26%; background:#0284c7;">Harvest</div>
+            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
+            <div class="gantt-seg" style="width:28%; background:#10b981;">L15/L19 Forge</div>
+            <div class="gantt-seg" style="width:10%; background:#334155;">OK</div>
+          </div>
+        </div>
+        <div class="gantt-row">
+          <span style="width:68px; color:var(--text-muted);">Stage 3 (L20-29)</span>
+          <div class="gantt-track">
+            <div class="gantt-seg" style="width:22%; background:#1e293b;"></div>
+            <div class="gantt-seg" style="width:24%; background:#0284c7;">Harvest</div>
+            <div class="gantt-seg" style="width:24%; background:#6366f1;">CFM-12</div>
+            <div class="gantt-seg" style="width:30%; background:#10b981;">L23/L27 Forge</div>
+          </div>
+        </div>
+        <div class="gantt-row">
+          <span style="width:68px; color:var(--text-muted);">Stage 4 (L30-39)</span>
+          <div class="gantt-track">
+            <div class="gantt-seg" style="width:32%; background:#1e293b;"></div>
+            <div class="gantt-seg" style="width:22%; background:#0284c7;">Harvest</div>
+            <div class="gantt-seg" style="width:22%; background:#ef4444;">LEACE</div>
+            <div class="gantt-seg" style="width:24%; background:#10b981;">L31/L35/L39</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- GUIDED 4-STEP IN-WEIGHTS AGENT FORGING WORKFLOW -->
 <div class="workflow-banner">
@@ -1463,9 +1637,378 @@ async function triggerWorkflow(useCustomInputs) {{
 }}
 
 document.getElementById('wf-preset-select').addEventListener('change', () => triggerWorkflow(false));
-document.getElementById('wf-run-btn').addEventListener('click', () => triggerWorkflow(true));
+document.getElementById('wf-run-btn').addEventListener('click', () => {{
+  setIsoChapter(3);
+  triggerWorkflow(true);
+}});
+
+// --- 3D ISOMETRIC HYBRID-MOE & SURGICAL FORGE ENGINE ---
+let isoChapter = 0;
+let isoPlaying = true;
+let isoTick = 0;
+
+const ISO_CHAPTERS = [
+  {{
+    badge: 'CHAPTER 1 OF 5 // BLOCK ANATOMY',
+    title: 'Inside One Qwen3.6 Hybrid MoE Block (256 Routed Experts)',
+    desc: 'Each layer holds 256 specialized Routed Experts (16x16 grid on the slab) plus 1 always-on Shared Expert. CircuitForge keeps all 256 routed experts 100% frozen to preserve pre-trained coding knowledge, and only edits the Full-Attention o_proj / shared anchor.',
+    getCallout: (s) => `Frozen Routed Experts: ${{s.profile.num_experts}} / ${{s.profile.num_experts}} | Active Anchor Layers: ${{s.controls.active_anchor_layers.join(', ')}}`
+  }},
+  {{
+    badge: 'CHAPTER 2 OF 5 // TOP-8 ROUTING',
+    title: 'Token Attention & Top-8 Expert Dispatch',
+    desc: 'The router inspects each token and sends copies along curved arcs to the Top-8 best-suited experts on the 16x16 slab, plus the Shared Expert. Results travel back and combine into the residual stream while we monitor Shannon Entropy (H_router).',
+    getCallout: (s) => {{
+      const r0 = (s.routing_equalizer && s.routing_equalizer.anchor_routing && s.routing_equalizer.anchor_routing[2]) || {{layer_idx: 19, router_entropy: 2.08, top_expert_id: 42}};
+      return `Anchor L${{r0.layer_idx}} Router Entropy: H = ${{r0.router_entropy.toFixed(2)}} bits | Primary Expert: #${{r0.top_expert_id}}`;
+    }}
+  }},
+  {{
+    badge: 'CHAPTER 3 OF 5 // CFM-12 SWEEPER',
+    title: '40-Layer Hybrid Stack: Full-Attention Anchors vs. Linear Slabs',
+    desc: 'Zooming out to all 40 layers across 4 pipeline stages (10 layers per stage): 30 layers are fast Gated-DeltaNet Linear Attention (slate), while every 4th layer (L3, L7, L11, L15, L19, L23, L27, L31, L35, L39) is a Full-Attention Anchor (glowing cyan) that controls global tool-call planning.',
+    getCallout: (s) => {{
+      const s2 = (s.guided_workflow && s.guided_workflow.step2_discovery) || {{selected_anchors: [23, 15, 19], top_capacity_pct: 97.96}};
+      return `CFM-12 Top Discovered Anchors: Layers ${{s2.selected_anchors.join(', ')}} | Null-Space Capacity: ${{s2.top_capacity_pct}}%`;
+    }}
+  }},
+  {{
+    badge: 'CHAPTER 4 OF 5 // SURGICAL FORGE',
+    title: 'Multi-Axis LEACE Erasure + Null-Space Rank-1 Surgery (P_perp)',
+    desc: 'On the discovered Full-Attention Anchor (L23), the crimson LEACE wave collapses the 3-axis bad-habit subspace to zero, and the emerald Null-Space beam locks the new agent reflex into P_perp with 0.0 syntax key (K0) leakage.',
+    getCallout: (s) => {{
+      const s3 = (s.guided_workflow && s.guided_workflow.step3_surgery) || {{lead_anchor_layer: 23, leace_after_cov: 0, nullspace_gain: 2.5, syntax_k0_leakage: 0}};
+      return `Anchor L${{s3.lead_anchor_layer}}: LEACE Residual = ${{s3.leace_after_cov}} | Reflex Gain = +${{s3.nullspace_gain}} | Syntax K0 Leak = ${{s3.syntax_k0_leakage}}`;
+    }}
+  }},
+  {{
+    badge: 'CHAPTER 5 OF 5 // SENTINEL SHIELD',
+    title: 'Zero-Log Visual Spike Radar & Auditor Expert (#-1) Interception',
+    desc: 'If an adversarial prompt or out-of-distribution spike hits the layer, the MoE Anomaly Sentinel intercepts the crimson trajectory in real time and diverts it into virtual Auditor Expert #-1, neutralizing the orthogonal drift before any routed expert fires.',
+    getCallout: (s) => {{
+      const sr = s.spike_radar || {{status: 'NOMINAL', sentinel_interceptions: 0}};
+      return `Sentinel Status: ${{sr.status}} | Total Auditor #-1 Interceptions: ${{sr.sentinel_interceptions}}`;
+    }}
+  }}
+];
+
+function setIsoChapter(idx) {{
+  isoChapter = (idx + ISO_CHAPTERS.length) % ISO_CHAPTERS.length;
+  document.querySelectorAll('#iso-chapter-pills .iso-pill').forEach((btn, i) => {{
+    btn.classList.toggle('active', i === isoChapter);
+  }});
+  updateIsoStoryText();
+}}
+
+function updateIsoStoryText() {{
+  const ch = ISO_CHAPTERS[isoChapter];
+  document.getElementById('iso-ch-badge').textContent = ch.badge;
+  document.getElementById('iso-ch-title').textContent = ch.title;
+  document.getElementById('iso-ch-desc').textContent = ch.desc;
+  if (hudState && hudState.profile) {{
+    document.getElementById('iso-ch-Callout').textContent = ch.getCallout(hudState);
+  }}
+}}
+
+document.querySelectorAll('#iso-chapter-pills .iso-pill').forEach((btn) => {{
+  btn.addEventListener('click', () => setIsoChapter(parseInt(btn.getAttribute('data-ch'), 10)));
+}});
+document.getElementById('iso-next-btn').addEventListener('click', () => setIsoChapter(isoChapter + 1));
+document.getElementById('iso-play-btn').addEventListener('click', (e) => {{
+  isoPlaying = !isoPlaying;
+  e.target.innerHTML = isoPlaying ? '&#9208; Pause Animation' : '&#9654; Play Animation';
+}});
+document.getElementById('iso-time-scrubber').addEventListener('input', (e) => {{
+  isoPlaying = false;
+  document.getElementById('iso-play-btn').innerHTML = '&#9654; Play Animation';
+  isoTick = parseFloat(e.target.value) * 1.8;
+  drawIsoCanvas();
+}});
+
+// Isometric projection helper: maps 3D (x, y, z) to 2D canvas (px, py)
+function isoProject(x, y, z, cx, cy, scale) {{
+  const px = cx + (x - y) * 0.866 * scale;
+  const py = cy + (x + y) * 0.5 * scale - z * scale;
+  return [px, py];
+}}
+
+function drawIsoSlab(ctx, cx, cy, w, d, h, scale, topFill, leftFill, rightFill, strokeCol) {{
+  const p00 = isoProject(-w/2, -d/2, h, cx, cy, scale);
+  const p10 = isoProject(w/2, -d/2, h, cx, cy, scale);
+  const p11 = isoProject(w/2, d/2, h, cx, cy, scale);
+  const p01 = isoProject(-w/2, d/2, h, cx, cy, scale);
+
+  const b10 = isoProject(w/2, -d/2, 0, cx, cy, scale);
+  const b11 = isoProject(w/2, d/2, 0, cx, cy, scale);
+  const b01 = isoProject(-w/2, d/2, 0, cx, cy, scale);
+
+  // Left face
+  ctx.beginPath();
+  ctx.moveTo(p01[0], p01[1]);
+  ctx.lineTo(p11[0], p11[1]);
+  ctx.lineTo(b11[0], b11[1]);
+  ctx.lineTo(b01[0], b01[1]);
+  ctx.closePath();
+  ctx.fillStyle = leftFill;
+  ctx.fill();
+  ctx.strokeStyle = strokeCol;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Right face
+  ctx.beginPath();
+  ctx.moveTo(p10[0], p10[1]);
+  ctx.lineTo(p11[0], p11[1]);
+  ctx.lineTo(b11[0], b11[1]);
+  ctx.lineTo(b10[0], b10[1]);
+  ctx.closePath();
+  ctx.fillStyle = rightFill;
+  ctx.fill();
+  ctx.stroke();
+
+  // Top face
+  ctx.beginPath();
+  ctx.moveTo(p00[0], p00[1]);
+  ctx.lineTo(p10[0], p10[1]);
+  ctx.lineTo(p11[0], p11[1]);
+  ctx.lineTo(p01[0], p01[1]);
+  ctx.closePath();
+  ctx.fillStyle = topFill;
+  ctx.fill();
+  ctx.stroke();
+}}
+
+function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
+  const cx = W * 0.5;
+  const cy = H * 0.57;
+  const scale = 20.0;
+
+  // Base Node / Pedestal Slab
+  drawIsoSlab(ctx, cx, cy + 28, 12.2, 12.2, 0.9, scale, '#0f172a', '#090f1d', '#060a14', '#1e293b');
+
+  // Main Full-Attention Anchor + 256-Expert Slab
+  const topCol = mode === 'surgery' ? '#0c273d' : (mode === 'sentinel' ? '#24111c' : '#112239');
+  const strokeCol = mode === 'surgery' ? '#10b981' : (mode === 'sentinel' ? '#ef4444' : '#38bdf8');
+  drawIsoSlab(ctx, cx, cy, 10.6, 10.6, 1.15, scale, topCol, '#0a1829', '#07111e', strokeCol);
+
+  // Draw 16x16 = 256 Routed Experts grid on top of the slab
+  const activeTop8 = [18, 42, 77, 105, 134, 179, 211, 244];
+  for (let r = 0; r < 16; r++) {{
+    for (let c = 0; c < 16; c++) {{
+      const expId = r * 16 + c;
+      const gx = -4.5 + c * 0.6;
+      const gy = -4.5 + r * 0.6;
+      const pt = isoProject(gx, gy, 1.18, cx, cy, scale);
+      const isPicked = activeTop8.includes(expId);
+      ctx.beginPath();
+      ctx.arc(pt[0], pt[1], isPicked ? 3.4 : 1.9, 0, Math.PI * 2);
+      if (isPicked && (mode === 'routing' || mode === 'block')) {{
+        ctx.fillStyle = '#f59e0b';
+      }} else {{
+        ctx.fillStyle = '#334155';
+      }}
+      ctx.fill();
+    }}
+  }}
+
+  // Draw Shared Expert + Full-Attention o_proj Anchor Pillar (Left-Top)
+  const shPos = isoProject(-6.2, -2.5, 1.15, cx, cy, scale);
+  drawIsoSlab(ctx, shPos[0], shPos[1], 2.2, 2.2, 1.4, scale * 0.75, '#065f46', '#064e3b', '#042f2e', '#10b981');
+  ctx.fillStyle = '#6ee7b7';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('Full-Attn Anchor (L23) + Shared Exp', shPos[0] - 95, shPos[1] - 32);
+
+  // Draw Virtual Auditor Expert #-1 Pillar (Right-Top)
+  const auPos = isoProject(6.2, -2.5, 1.15, cx, cy, scale);
+  const auTop = mode === 'sentinel' ? '#991b1b' : '#1e1b4b';
+  const auBorder = mode === 'sentinel' ? '#ef4444' : '#818cf8';
+  drawIsoSlab(ctx, auPos[0], auPos[1], 2.2, 2.2, 1.4, scale * 0.75, auTop, '#1e1b4b', '#0f172a', auBorder);
+  ctx.fillStyle = mode === 'sentinel' ? '#fca5a5' : '#a5b4fc';
+  ctx.fillText('Auditor Expert #-1 (Null-Space)', auPos[0] - 75, auPos[1] - 32);
+
+  // Incoming Token Origin above slab
+  const tokPt = isoProject(0, 0, 5.2, cx, cy, scale);
+  ctx.beginPath();
+  ctx.arc(tokPt[0], tokPt[1], 7, 0, Math.PI * 2);
+  ctx.fillStyle = mode === 'sentinel' ? '#ef4444' : '#38bdf8';
+  ctx.fill();
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText(mode === 'sentinel' ? 'Adversarial / OOD Spike Token' : 'Incoming Agent Token (h_t)', tokPt[0] - 78, tokPt[1] - 14);
+
+  // Mode-specific animated trajectories
+  if (mode === 'block' || mode === 'routing') {{
+    for (let i = 0; i < activeTop8.length; i++) {{
+      const expId = activeTop8[i];
+      const r = Math.floor(expId / 16);
+      const c = expId % 16;
+      const gx = -4.5 + c * 0.6;
+      const gy = -4.5 + r * 0.6;
+      const dst = isoProject(gx, gy, 1.2, cx, cy, scale);
+
+      ctx.beginPath();
+      ctx.moveTo(tokPt[0], tokPt[1]);
+      const ctrlX = (tokPt[0] + dst[0]) * 0.5;
+      const ctrlY = Math.min(tokPt[1], dst[1]) - 28;
+      ctx.quadraticCurveTo(ctrlX, ctrlY, dst[0], dst[1]);
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.48)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Traveling token copy dot along quadratic curve
+      const t = (phase + i * 0.11) % 1.0;
+      const bx = (1-t)*(1-t)*tokPt[0] + 2*(1-t)*t*ctrlX + t*t*dst[0];
+      const by = (1-t)*(1-t)*tokPt[1] + 2*(1-t)*t*ctrlY + t*t*dst[1];
+      ctx.beginPath();
+      ctx.arc(bx, by, 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = '#fde047';
+      ctx.fill();
+    }}
+  }} else if (mode === 'surgery') {{
+    // 1. Crimson LEACE wave erasing 3-axis bad habit on Anchor
+    const waveR = 14 + (phase * 48);
+    ctx.beginPath();
+    ctx.ellipse(shPos[0], shPos[1] - 8, waveR, waveR * 0.55, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(239, 68, 68, ${{1.0 - phase}})`;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // 2. Emerald Null-Space P_perp surgical laser locking reflex into Anchor while 256 experts stay frozen
+    ctx.beginPath();
+    ctx.moveTo(tokPt[0], tokPt[1]);
+    ctx.lineTo(shPos[0], shPos[1] - 10);
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 3.2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#34d399';
+    ctx.fillText('LEACE Bad-Habit Erased + P_perp Reflex Injected (Syntax K0 Leak = 0.0)', cx - 195, H - 14);
+  }} else if (mode === 'sentinel') {{
+    // Crimson spike intercepted midway and rerouted to Auditor Expert #-1
+    const midPt = [cx + 22, cy - 55];
+    ctx.beginPath();
+    ctx.moveTo(tokPt[0], tokPt[1]);
+    ctx.lineTo(midPt[0], midPt[1]);
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(midPt[0], midPt[1]);
+    ctx.lineTo(auPos[0], auPos[1] - 12);
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    const t = phase;
+    const px = t < 0.5 ? tokPt[0] + (midPt[0]-tokPt[0])*(t*2) : midPt[0] + (auPos[0]-midPt[0])*((t-0.5)*2);
+    const py = t < 0.5 ? tokPt[1] + (midPt[1]-tokPt[1])*(t*2) : midPt[1] + (auPos[1]-12-midPt[1])*((t-0.5)*2);
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = t < 0.5 ? '#ef4444' : '#10b981';
+    ctx.fill();
+
+    ctx.fillStyle = '#fca5a5';
+    ctx.fillText('SENTINEL INTERCEPT: Rerouted to Auditor #-1 (256 Routed Experts Shielded)', cx - 210, H - 14);
+  }}
+}}
+
+function drawFourStageClusterScene(ctx, W, H, phase) {{
+  // Mirrors the 4-Diamond Isometric Pipeline Stage layout from the MoE Handbook video!
+  const scale = 11.5;
+  const stageCenters = [
+    {{ x: W * 0.50, y: H * 0.25, label: 'PIPELINE STAGE 1 (Layers 0-9)', startL: 0 }},
+    {{ x: W * 0.74, y: H * 0.48, label: 'PIPELINE STAGE 2 (Layers 10-19)', startL: 10 }},
+    {{ x: W * 0.50, y: H * 0.72, label: 'PIPELINE STAGE 3 (Layers 20-29)', startL: 20 }},
+    {{ x: W * 0.26, y: H * 0.48, label: 'PIPELINE STAGE 4 (Layers 30-39)', startL: 30 }}
+  ];
+  const fullAttn = [3, 7, 11, 15, 19, 23, 27, 31, 35, 39];
+
+  for (let s = 0; s < 4; s++) {{
+    const sc = stageCenters[s];
+    drawIsoSlab(ctx, sc.x, sc.y, 11.0, 11.0, 0.7, scale, '#0b1528', '#070e1b', '#050a14', '#1e293b');
+
+    // Draw 10 layers (2 rows x 5 columns of mini layer-slabs inside each pipeline diamond)
+    for (let li = 0; li < 10; li++) {{
+      const layerNum = sc.startL + li;
+      const row = Math.floor(li / 5);
+      const col = li % 5;
+      const lx = -3.8 + col * 1.9;
+      const ly = -2.2 + row * 4.2;
+      const pt = isoProject(lx, ly, 0.75, sc.x, sc.y, scale);
+      const isAnchor = fullAttn.includes(layerNum);
+      const topC = isAnchor ? '#0284c7' : '#1e293b';
+      const brdC = isAnchor ? '#38bdf8' : '#334155';
+      drawIsoSlab(ctx, pt[0], pt[1], 1.45, 2.6, isAnchor ? 0.65 : 0.32, scale, topC, '#0f172a', '#090d16', brdC);
+      if (isAnchor) {{
+        ctx.fillStyle = '#e0f2fe';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`L${{layerNum}}`, pt[0] - 9, pt[1] - 6);
+      }}
+    }}
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText(sc.label, sc.x - 78, sc.y + 72);
+  }}
+
+  // Animated activation flow arc cycling Stage 1 -> Stage 2 -> Stage 3 -> Stage 4
+  const seg = Math.floor(phase * 4) % 4;
+  const subT = (phase * 4) % 1.0;
+  const pA = stageCenters[seg];
+  const pB = stageCenters[(seg + 1) % 4];
+  const curX = pA.x + (pB.x - pA.x) * subT;
+  const curY = pA.y + (pB.y - pA.y) * subT;
+  ctx.beginPath();
+  ctx.arc(curX, curY - 12, 5.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#10b981';
+  ctx.fill();
+}}
+
+function drawIsoCanvas() {{
+  const canvas = document.getElementById('iso-moe-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const phase = (isoTick % 180) / 180.0;
+  document.getElementById('iso-clock-label').textContent = `t = ${{(phase * 1.80).toFixed(2)}} s`;
+  if (isoPlaying) {{
+    document.getElementById('iso-time-scrubber').value = Math.round(phase * 100);
+  }}
+
+  if (isoChapter === 0) {{
+    drawSingleMoESlabScene(ctx, W, H, phase, 'block');
+  }} else if (isoChapter === 1) {{
+    drawSingleMoESlabScene(ctx, W, H, phase, 'routing');
+  }} else if (isoChapter === 2) {{
+    drawFourStageClusterScene(ctx, W, H, phase);
+  }} else if (isoChapter === 3) {{
+    drawSingleMoESlabScene(ctx, W, H, phase, 'surgery');
+  }} else {{
+    drawSingleMoESlabScene(ctx, W, H, phase, 'sentinel');
+  }}
+}}
+
+function stepIsoLoop() {{
+  if (isoPlaying) {{
+    isoTick = (isoTick + 1) % 180;
+    drawIsoCanvas();
+  }}
+  requestAnimationFrame(stepIsoLoop);
+}}
+
+// Also jump to Chapter 5 automatically when user clicks a Spike Radar button
+['spike-ortho-btn', 'spike-mag-btn', 'spike-ent-btn'].forEach((id) => {{
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => setIsoChapter(4));
+}});
 
 renderHUD(hudState);
+updateIsoStoryText();
+drawIsoCanvas();
+requestAnimationFrame(stepIsoLoop);
 </script>
 </body>
 </html>

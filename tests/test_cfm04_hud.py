@@ -95,6 +95,8 @@ def test_hud_http_server_and_html_snapshot_export(tmp_path: Path) -> None:
             assert resp.status == 200
             body_html = resp.read().decode("utf-8")
             assert "Interactive Click-to-Steer Controls" in body_html
+            assert "3D ISOMETRIC HYBRID-MOE" in body_html
+            assert "iso-moe-canvas" in body_html
 
         # 2. GET /api/telemetry
         with urllib.request.urlopen(f"{base_url}/api/telemetry") as resp:
