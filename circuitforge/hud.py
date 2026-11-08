@@ -960,8 +960,52 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     justify-content: space-between;
   }}
   .control-group {{ margin-bottom: 14px; }}
-  .control-group label {{ display: block; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 5px; font-weight: 500; }}
-  input[type=range] {{ width: 100%; accent-color: var(--accent-cyan); cursor: pointer; }}
+  .control-group label {{ display: block; font-size: 0.82rem; color: var(--text-muted); margin-bottom: 7px; font-weight: 500; }}
+  input[type=range] {{
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #0284c7 0%, #38bdf8 50%, #10b981 100%);
+    border: 1px solid rgba(125, 211, 252, 0.45);
+    box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 12px rgba(56, 189, 248, 0.25);
+    cursor: pointer;
+    outline: none;
+    margin: 4px 0;
+  }}
+  input[type=range]::-webkit-slider-thumb {{
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffffff 0%, #38bdf8 55%, #10b981 100%);
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.85), 0 2px 6px rgba(0, 0, 0, 0.6);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }}
+  input[type=range]::-webkit-slider-thumb:hover {{
+    transform: scale(1.14);
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.95), 0 2px 8px rgba(0, 0, 0, 0.7);
+  }}
+  input[type=range]::-moz-range-track {{
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #0284c7 0%, #38bdf8 50%, #10b981 100%);
+    border: 1px solid rgba(125, 211, 252, 0.45);
+  }}
+  input[type=range]::-moz-range-thumb {{
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #ffffff 0%, #38bdf8 55%, #10b981 100%);
+    border: 2px solid #ffffff;
+    box-shadow: 0 0 14px rgba(16, 185, 129, 0.85);
+    cursor: pointer;
+  }}
   select, button {{
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     color: var(--text-main);
@@ -2092,7 +2136,7 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
   ctx.restore();
 
   drawIsoLabelTag(
-    ctx, tokPt[0] + 18, tokPt[1] - 26,
+    ctx, tokPt[0] + 54, tokPt[1] - 28,
     mode === 'sentinel' ? 'Adversarial / OOD Spike Token (h_t)' : 'Incoming Agent Token (h_t)',
     mode === 'sentinel' ? '#fecaca' : '#bae6fd',
     mode === 'sentinel' ? 'rgba(239,68,68,0.75)' : 'rgba(56,189,248,0.75)'
@@ -2187,32 +2231,128 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
       '#fde68a', 'rgba(245, 158, 11, 0.65)'
     );
   }} else if (mode === 'surgery') {{
-    // 1. Multi-ring Crimson LEACE wave erasing 3-axis bad habit on Anchor
+    // Chapter 4: Complete 3-Step Animated Surgical Forge (LEACE Erasure -> P_perp Null-Space Injection -> Forged Output)
+    const badHabitPt = isoProject(-5.8, 3.6, 4.3, cx, cy, scale);
+    const forgedOutPt = isoProject(4.2, 4.2, 1.9, cx, cy, scale);
+    const anchorTarget = [shPos[0], shPos[1] - 16];
+
+    // 1. Bad Habit Subspace Orb (-X) being collapsed and erased by Multi-Axis LEACE
+    const shrink = 1.0 - 0.45 * Math.sin(phase * Math.PI);
+    ctx.save();
+    ctx.shadowColor = '#ef4444';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(badHabitPt[0], badHabitPt[1], 6.5 * shrink, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+    ctx.fill();
+    ctx.strokeStyle = '#fca5a5';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.restore();
+    drawIsoLabelTag(
+      ctx, badHabitPt[0] - 18, badHabitPt[1] + 24,
+      '1. Bad Habit (-X) Erased via LEACE',
+      '#fecaca', 'rgba(239, 68, 68, 0.75)'
+    );
+
+    // Dashed Crimson LEACE Erasure Beam from Bad Habit to Anchor + collapsing crimson rings
+    ctx.save();
+    ctx.strokeStyle = 'rgba(239, 68, 68, 0.65)';
+    ctx.lineWidth = 2.0;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(badHabitPt[0], badHabitPt[1]);
+    ctx.lineTo(anchorTarget[0], anchorTarget[1]);
+    ctx.stroke();
+    ctx.restore();
+
     for (let ring = 0; ring < 2; ring++) {{
-      const pRing = (phase + ring * 0.5) % 1.0;
-      const waveR = 14 + (pRing * 56);
+      const pRing = (1.0 - ((phase + ring * 0.5) % 1.0)); // Imploding/collapsing rings!
+      const waveR = 10 + (pRing * 38);
       ctx.beginPath();
-      ctx.ellipse(shPos[0], shPos[1] - 12, waveR, waveR * 0.55, 0, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(239, 68, 68, ${{(1.0 - pRing) * 0.85}})`;
-      ctx.lineWidth = 2.4;
+      ctx.ellipse(anchorTarget[0], anchorTarget[1], waveR, waveR * 0.55, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(239, 68, 68, ${{(1.0 - pRing) * 0.8}})`;
+      ctx.lineWidth = 2.0;
       ctx.stroke();
     }}
 
-    // 2. Emerald Null-Space P_perp surgical laser locking reflex into Anchor while 256 experts stay frozen
+    // 2. Curved Null-Space P_perp Injection Arc (Incoming Token -> Full-Attn Anchor L23)
+    const inCtrlX = (tokPt[0] + anchorTarget[0]) * 0.5 - 24;
+    const inCtrlY = Math.min(tokPt[1], anchorTarget[1]) - 28;
+    ctx.save();
+    ctx.shadowColor = '#38bdf8';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(tokPt[0], tokPt[1]);
+    ctx.quadraticCurveTo(inCtrlX, inCtrlY, anchorTarget[0], anchorTarget[1]);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+    ctx.restore();
+
+    // 3. Curved Forged Agent Reflex Arc (Full-Attn Anchor L23 -> Forged Output Stream +X)
+    const outCtrlX = (anchorTarget[0] + forgedOutPt[0]) * 0.5 - 15;
+    const outCtrlY = (anchorTarget[1] + forgedOutPt[1]) * 0.5 + 18;
     ctx.save();
     ctx.shadowColor = '#10b981';
     ctx.shadowBlur = 14;
     ctx.beginPath();
-    ctx.moveTo(tokPt[0], tokPt[1]);
-    ctx.lineTo(shPos[0], shPos[1] - 16);
-    ctx.strokeStyle = '#34d399';
-    ctx.lineWidth = 3.5;
+    ctx.moveTo(anchorTarget[0], anchorTarget[1]);
+    ctx.quadraticCurveTo(outCtrlX, outCtrlY, forgedOutPt[0], forgedOutPt[1]);
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 3.0;
     ctx.stroke();
     ctx.restore();
 
+    // Animate 4 continuous packets flowing: Token -> Anchor L23 (P_perp) -> Forged Reflex Output (+X)
+    for (let k = 0; k < 4; k++) {{
+      const t = (phase + k * 0.25) % 1.0;
+      let px, py, col;
+      if (t < 0.45) {{
+        const u = t / 0.45;
+        px = (1-u)*(1-u)*tokPt[0] + 2*(1-u)*u*inCtrlX + u*u*anchorTarget[0];
+        py = (1-u)*(1-u)*tokPt[1] + 2*(1-u)*u*inCtrlY + u*u*anchorTarget[1];
+        col = '#38bdf8';
+      }} else {{
+        const u = (t - 0.45) / 0.55;
+        px = (1-u)*(1-u)*anchorTarget[0] + 2*(1-u)*u*outCtrlX + u*u*forgedOutPt[0];
+        py = (1-u)*(1-u)*anchorTarget[1] + 2*(1-u)*u*outCtrlY + u*u*forgedOutPt[1];
+        col = '#34d399';
+      }}
+      ctx.save();
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(px, py, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2.0;
+      ctx.stroke();
+      ctx.restore();
+    }}
+
+    // Forged Reflex Output Orb (+X: edit_file state.md)
+    ctx.save();
+    ctx.shadowColor = '#10b981';
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.arc(forgedOutPt[0], forgedOutPt[1], 7.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#10b981';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.restore();
+    drawIsoLabelTag(
+      ctx, forgedOutPt[0], forgedOutPt[1] + 24,
+      '2. Forged Reflex Out (+X: edit_file state.md)',
+      '#6ee7b7', 'rgba(16, 185, 129, 0.85)'
+    );
+
     drawIsoLabelTag(
       ctx, cx, H - 18,
-      'LEACE Bad-Habit Erased + P_perp Reflex Injected (Syntax K0 Leak = 0.0)',
+      'SURGICAL FORGE: 1. LEACE Erases Bad Habit (-X) -> 2. P_perp Injects Reflex (+X) -> K0 Leak = 0.0',
       '#6ee7b7', 'rgba(16, 185, 129, 0.75)'
     );
   }} else if (mode === 'sentinel') {{
