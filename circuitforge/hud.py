@@ -576,8 +576,9 @@ class MechanisticTelemetryHUD:
                 K0 = self._preserved_keys[:4].copy()
                 N = 48
                 Z = np.zeros((N, 3), dtype=np.float32)
-                for c in range(3):
-                    Z[:, c] = np.array([1.0 if (i + c) % 2 == 0 else -1.0 for i in range(N)], dtype=np.float32)
+                Z[:, 0] = np.array([1.0 if i % 2 == 0 else -1.0 for i in range(N)], dtype=np.float32)
+                Z[:, 1] = np.array([1.0 if (i // 2) % 2 == 0 else -1.0 for i in range(N)], dtype=np.float32)
+                Z[:, 2] = np.array([1.0 if (i // 4) % 2 == 0 else -1.0 for i in range(N)], dtype=np.float32)
                 concept_dirs = rng.standard_normal((3, self.d_model)).astype(np.float32) * 0.45
                 X_base = (rng.standard_normal((N, self.d_model)).astype(np.float32) * 0.15) + (Z @ concept_dirs)
 
