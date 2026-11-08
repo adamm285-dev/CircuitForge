@@ -116,6 +116,33 @@ def test_hud_http_server_and_html_snapshot_export(tmp_path: Path) -> None:
             assert updated["controls"]["global_alpha"] == -1.2
             assert updated["controls"]["schedule"] == "uniform"
             assert updated["predicted_output"]["compliance_status"] == "ANTI_PATTERN_UNSCAFFOLDED"
+
+        # 4. POST /api/simulate-spike (Zero-Log Visual Spike Radar & Sentinel Circuit-Breaker)
+        req_spike = urllib.request.Request(
+            f"{base_url}/api/simulate-spike",
+            data=json.dumps({"attack_type": "orthogonal_hijack", "layer_idx": 19}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_spike) as resp:
+            assert resp.status == 200
+            spike_state = json.loads(resp.read().decode("utf-8"))
+            assert spike_state["spike_radar"]["status"] == "SPIKE_NEUTRALIZED_BY_SENTINEL"
+            assert spike_state["spike_radar"]["sentinel_interceptions"] >= 1
+            assert len(spike_state["spike_radar"]["events"]) == 1
+
+        # 5. POST /api/run-hypothesis (Interactive Hypothesis A & B Lab)
+        req_hyp = urllib.request.Request(
+            f"{base_url}/api/run-hypothesis",
+            data=json.dumps({"hypothesis_id": "hypothesis_b"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_hyp) as resp:
+            assert resp.status == 200
+            hyp_state = json.loads(resp.read().decode("utf-8"))
+            assert hyp_state["hypothesis_lab"]["active_hypothesis"] == "hypothesis_b"
+            assert "CONFIRMED" in hyp_state["hypothesis_lab"]["verdict"]
     finally:
         srv.stop()
         hud.close()
