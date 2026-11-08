@@ -143,6 +143,20 @@ def test_hud_http_server_and_html_snapshot_export(tmp_path: Path) -> None:
             hyp_state = json.loads(resp.read().decode("utf-8"))
             assert hyp_state["hypothesis_lab"]["active_hypothesis"] == "hypothesis_b"
             assert "CONFIRMED" in hyp_state["hypothesis_lab"]["verdict"]
+
+        # 6. POST /api/run-workflow (Guided 4-Step In-Weights Agent Forging Workflow)
+        req_wf = urllib.request.Request(
+            f"{base_url}/api/run-workflow",
+            data=json.dumps({"preset_id": "topology_gate_guard", "alpha": 2.5}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req_wf) as resp:
+            assert resp.status == 200
+            wf_state = json.loads(resp.read().decode("utf-8"))
+            assert wf_state["guided_workflow"]["preset_id"] == "topology_gate_guard"
+            assert wf_state["guided_workflow"]["step3_surgery"]["syntax_k0_leakage"] < 1e-12
+            assert len(wf_state["guided_workflow"]["step2_discovery"]["selected_anchors"]) >= 1
     finally:
         srv.stop()
         hud.close()
