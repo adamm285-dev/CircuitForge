@@ -1948,6 +1948,7 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
 
   // Draw 16x16 = 256 Routed Experts as 3D micro-pillars on the slab
   const activeTop8 = [18, 42, 77, 105, 134, 179, 211, 244];
+  const scanRow = Math.floor(phase * 16) % 16;
   for (let r = 0; r < 16; r++) {{
     for (let c = 0; c < 16; c++) {{
       const expId = r * 16 + c;
@@ -1955,17 +1956,32 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
       const gy = -4.5 + r * 0.6;
       const pt = isoProject(gx, gy, 1.18, cx, cy, scale);
       const isPicked = activeTop8.includes(expId);
-      const showActive = isPicked && (mode === 'routing' || mode === 'block');
 
-      if (showActive) {{
-        // Elevated glowing 3D micro-pillar for active Top-8 Routed Experts
+      if (mode === 'routing' && isPicked) {{
+        // Chapter 2: Elevated glowing 3D micro-pillar for active Top-8 Routed Experts
         drawIsoSlab(
           ctx, pt[0], pt[1],
-          0.42, 0.42, 0.42 + 0.12 * Math.sin(phase * Math.PI * 2 + expId),
-          scale, '#fbbf24', '#d97706', '#92400e', '#fef08a', 'rgba(245, 158, 11, 0.6)'
+          0.42, 0.42, 0.44 + 0.14 * Math.sin(phase * Math.PI * 2 + expId),
+          scale, '#fbbf24', '#d97706', '#92400e', '#fef08a', 'rgba(245, 158, 11, 0.65)'
         );
+      }} else if (mode === 'block') {{
+        // Chapter 1: Anatomical X-Ray of all 256 Frozen Routed Experts with scanning wave
+        const distRow = Math.abs(r - (phase * 15));
+        const inWave = distRow < 1.6;
+        if (inWave) {{
+          drawIsoSlab(
+            ctx, pt[0], pt[1],
+            0.34, 0.34, 0.22 + (1.6 - distRow) * 0.14,
+            scale, '#38bdf8', '#0284c7', '#0369a1', '#bae6fd', 'rgba(56, 189, 248, 0.45)'
+          );
+        }} else {{
+          ctx.beginPath();
+          ctx.arc(pt[0], pt[1], 2.2, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.42)';
+          ctx.fill();
+        }}
       }} else {{
-        // Frozen expert micro-tile
+        // Dormant / frozen expert micro-tile
         ctx.beginPath();
         ctx.arc(pt[0], pt[1], 2.0, 0, Math.PI * 2);
         ctx.fillStyle = mode === 'surgery' ? 'rgba(56, 189, 248, 0.32)' : 'rgba(71, 85, 105, 0.55)';
@@ -1976,9 +1992,10 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
 
   // Draw Shared Expert + Full-Attention o_proj Anchor Pillar (Left-Top)
   const shPos = isoProject(-6.35, -2.6, 1.15, cx, cy, scale);
+  const shPulse = mode === 'block' ? (1.55 + 0.15 * Math.sin(phase * Math.PI * 2)) : 1.55;
   drawIsoSlab(
     ctx, shPos[0], shPos[1],
-    2.25, 2.25, 1.55, scale * 0.76,
+    2.25, 2.25, shPulse, scale * 0.76,
     '#10b981', '#059669', '#064e3b', '#6ee7b7', 'rgba(16, 185, 129, 0.45)'
   );
   drawIsoLabelTag(
@@ -2004,7 +2021,62 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
     mode === 'sentinel' ? '#fecaca' : '#c7d2fe', auBorder
   );
 
-  // Incoming Token Origin Orb above slab
+  if (mode === 'block') {{
+    // CHAPTER 1: Block Anatomy & Architectural Separation (No token routing arcs!)
+    // Draw glowing Cryo-Lock Perimeter Bracket around the 16x16 Routed Expert Slab
+    const c00 = isoProject(-4.95, -4.95, 1.24, cx, cy, scale);
+    const c10 = isoProject(4.95, -4.95, 1.24, cx, cy, scale);
+    const c11 = isoProject(4.95, 4.95, 1.24, cx, cy, scale);
+    const c01 = isoProject(-4.95, 4.95, 1.24, cx, cy, scale);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(c00[0], c00[1]);
+    ctx.lineTo(c10[0], c10[1]);
+    ctx.lineTo(c11[0], c11[1]);
+    ctx.lineTo(c01[0], c01[1]);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+
+    // Spotlight ring pulsing around the editable Full-Attention Anchor + Shared Expert
+    const ringR = 26 + 8 * Math.sin(phase * Math.PI * 2);
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(shPos[0], shPos[1] - 12, ringR, ringR * 0.55, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.85)';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    ctx.restore();
+
+    // Anatomical callout pointer above the 16x16 slab center
+    const slabCenter = isoProject(-1.2, -1.2, 3.65, cx, cy, scale);
+    const slabBase = isoProject(-0.5, -0.5, 1.35, cx, cy, scale);
+    ctx.beginPath();
+    ctx.moveTo(slabCenter[0], slabCenter[1] + 10);
+    ctx.lineTo(slabBase[0], slabBase[1]);
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    drawIsoLabelTag(
+      ctx, slabCenter[0] - 24, slabCenter[1],
+      '16x16 = 256 Routed Experts (100% Cryo-Frozen)',
+      '#bae6fd', 'rgba(56, 189, 248, 0.8)'
+    );
+
+    drawIsoLabelTag(
+      ctx, cx, H - 18,
+      'ANATOMY: Surgical Target = Full-Attn o_proj (Green) | 256 Routed Experts Untouched (Cyan)',
+      '#6ee7b7', 'rgba(16, 185, 129, 0.65)'
+    );
+    return;
+  }}
+
+  // Incoming Token Origin Orb above slab (Chapters 2, 4, 5)
   const tokPt = isoProject(0, 0, 5.75, cx, cy, scale);
   const orbCol = mode === 'sentinel' ? '#ef4444' : '#38bdf8';
   ctx.save();
@@ -2027,13 +2099,16 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
   );
 
   // Mode-specific animated trajectories
-  if (mode === 'block' || mode === 'routing') {{
-    // Also draw beam to Shared Expert / Anchor
+  if (mode === 'routing') {{
+    // Chapter 2: Token Dispatch (Top-8 + Shared Expert) AND Return Combine Stream + Live Entropy Gauge
+    const outPt = isoProject(4.2, 4.2, 1.9, cx, cy, scale);
+
+    // Always-on Shared Expert dispatch arc
     ctx.beginPath();
     ctx.moveTo(tokPt[0], tokPt[1]);
     ctx.quadraticCurveTo((tokPt[0] + shPos[0]) * 0.5, tokPt[1] - 18, shPos[0], shPos[1] - 16);
-    ctx.strokeStyle = 'rgba(16, 185, 129, 0.65)';
-    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)';
+    ctx.lineWidth = 2.2;
     ctx.stroke();
 
     for (let i = 0; i < activeTop8.length; i++) {{
@@ -2044,32 +2119,72 @@ function drawSingleMoESlabScene(ctx, W, H, phase, mode) {{
       const gy = -4.5 + r * 0.6;
       const dst = isoProject(gx, gy, 1.45, cx, cy, scale);
 
+      // 1. Outbound Dispatch Arc (Amber: Token -> Selected Expert)
       ctx.beginPath();
       ctx.moveTo(tokPt[0], tokPt[1]);
       const ctrlX = (tokPt[0] + dst[0]) * 0.5;
       const ctrlY = Math.min(tokPt[1], dst[1]) - 32;
       ctx.quadraticCurveTo(ctrlX, ctrlY, dst[0], dst[1]);
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.52)';
+      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
       ctx.lineWidth = 1.6;
       ctx.stroke();
 
-      // Traveling token copy dot along quadratic curve with glow
+      // 2. Return Combine Arc (Cyan: Selected Expert -> Residual Output Orb)
+      const rCtrlX = (dst[0] + outPt[0]) * 0.5;
+      const rCtrlY = Math.min(dst[1], outPt[1]) - 18;
+      ctx.beginPath();
+      ctx.moveTo(dst[0], dst[1]);
+      ctx.quadraticCurveTo(rCtrlX, rCtrlY, outPt[0], outPt[1]);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // Traveling token copy packet: 0..0.55 outbound (amber), 0.55..1.0 return combine (cyan)
       const t = (phase + i * 0.11) % 1.0;
-      const bx = (1-t)*(1-t)*tokPt[0] + 2*(1-t)*t*ctrlX + t*t*dst[0];
-      const by = (1-t)*(1-t)*tokPt[1] + 2*(1-t)*t*ctrlY + t*t*dst[1];
+      let bx, by, pktCol;
+      if (t < 0.55) {{
+        const u = t / 0.55;
+        bx = (1-u)*(1-u)*tokPt[0] + 2*(1-u)*u*ctrlX + u*u*dst[0];
+        by = (1-u)*(1-u)*tokPt[1] + 2*(1-u)*u*ctrlY + u*u*dst[1];
+        pktCol = '#fef08a';
+      }} else {{
+        const u = (t - 0.55) / 0.45;
+        bx = (1-u)*(1-u)*dst[0] + 2*(1-u)*u*rCtrlX + u*u*outPt[0];
+        by = (1-u)*(1-u)*dst[1] + 2*(1-u)*u*rCtrlY + u*u*outPt[1];
+        pktCol = '#7dd3fc';
+      }}
       ctx.save();
-      ctx.shadowColor = '#fde047';
+      ctx.shadowColor = pktCol;
       ctx.shadowBlur = 10;
       ctx.beginPath();
       ctx.arc(bx, by, 3.6, 0, Math.PI * 2);
-      ctx.fillStyle = '#fef08a';
+      ctx.fillStyle = pktCol;
       ctx.fill();
       ctx.restore();
     }}
+
+    // Combined Output Residual Stream Orb
+    ctx.save();
+    ctx.shadowColor = '#10b981';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.arc(outPt[0], outPt[1], 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#10b981';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.restore();
+    drawIsoLabelTag(
+      ctx, outPt[0], outPt[1] + 24,
+      'Combined Residual Out (Top-8 + Shared)',
+      '#6ee7b7', 'rgba(16, 185, 129, 0.7)'
+    );
+
     drawIsoLabelTag(
       ctx, cx, H - 18,
-      'Top-8 Routed Experts Active (Amber) + 248 Dormant | All 256 Frozen During Surgery',
-      '#fde68a', 'rgba(245, 158, 11, 0.55)'
+      'TOP-8 DISPATCH: Router Gate Softmax -> 8 Active Experts (Amber) -> Weighted Combine (Cyan)',
+      '#fde68a', 'rgba(245, 158, 11, 0.65)'
     );
   }} else if (mode === 'surgery') {{
     // 1. Multi-ring Crimson LEACE wave erasing 3-axis bad habit on Anchor
