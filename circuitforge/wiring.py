@@ -217,6 +217,28 @@ BUILTIN_PROFILES: dict[str, dict[str, Any]] = {
         "linear_value_head_dim": 0,
         "layer_types": ["full_attention" for _ in range(32)],
     },
+    "Nemotron-3.5-Bolt-74B-A9B": {
+        "architectures": ["NemotronHForCausalLM"],
+        "hidden_size": 4096,
+        "num_hidden_layers": 88,
+        "num_attention_heads": 32,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "full_attention_interval": 11,
+        "attn_output_gate": False,
+        "num_experts": 256,
+        "num_experts_per_tok": 9,
+        "moe_intermediate_size": 1024,
+        "shared_expert_intermediate_size": 5376,
+        "linear_num_key_heads": 8,
+        "linear_num_value_heads": 64,
+        "linear_key_head_dim": 128,
+        "linear_value_head_dim": 128,
+        "layer_types": [
+            "full_attention" if (i + 1) % 11 == 0 else "linear_attention"
+            for i in range(88)
+        ],
+    },
 }
 
 
@@ -263,11 +285,14 @@ _CONTROL_TENSOR_RE = re.compile(
     r"(?:^|[./])(?:"
     r"self_attn\."
     r"|linear_attn\."
+    r"|mixer\.(?:in_proj|out_proj|conv1d|q_proj|k_proj|v_proj|o_proj|gate)\b"
+    r"|mamba\.(?:in_proj|out_proj|conv1d)\b"
     r"|mlp\.shared_experts?\."
     r"|mlp\.(?:down|up|gate)_proj\b"
     r"|mlp\.gate\."
     r"|block_sparse_moe\.gate\b"
     r"|attn_(?:q|k|v|output)\b"
+    r"|ssm_(?:in|out|conv1d)\b"
     r"|ffn_(?:gate|up|down)_shexp\b"
     r"|ffn_(?:down|up|gate)\.weight\b"
     r"|ffn_gate_inp\b"

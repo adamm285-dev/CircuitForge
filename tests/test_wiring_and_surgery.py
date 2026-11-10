@@ -113,3 +113,24 @@ def test_cli_verify_surgery_and_inspect_wiring() -> None:
     assert cmd_inspect_wiring(None, "Qwen3.6-35B-A3B", "json") == 0
     assert cmd_plan_surgery(None, "Qwen3.6-35B-A3B", True, False, None) == 0
     assert cmd_verify_surgery(seed=42) == 0
+
+
+def test_nemotron_35_bolt_wiring_and_control_tensors() -> None:
+    """Verify Nemotron-3.5-Bolt-74B-A9B hybrid Mamba-2 + Latent-MoE + 8-Full-Attention-Anchor wiring."""
+    wn = load_wiring_map(profile_name="Nemotron-3.5-Bolt-74B-A9B")
+    assert wn.architecture == "NemotronHForCausalLM"
+    assert wn.num_layers == 88
+    assert wn.hidden_size == 4096
+    assert wn.num_experts == 256
+    assert wn.num_experts_per_tok == 9
+    assert wn.has_shared_expert is True
+    assert len(wn.full_attention_layers) == 8
+    assert len(wn.linear_attention_layers) == 80
+    assert wn.full_attention_layers == [10, 21, 32, 43, 54, 65, 76, 87]
+
+    # Mamba-2 / Nemotron mixer control projections vs 2-bit routed experts
+    assert is_surgical_control_tensor("model.layers.10.mixer.o_proj.weight")
+    assert is_surgical_control_tensor("model.layers.0.mixer.in_proj.weight")
+    assert is_surgical_control_tensor("blk.0.ssm_out.weight")
+    assert is_routed_expert_tensor("model.layers.1.mixer.experts.12.down_proj.weight")
+    assert not is_surgical_control_tensor("model.layers.1.mixer.experts.12.down_proj.weight")
