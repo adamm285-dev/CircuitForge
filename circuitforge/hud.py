@@ -444,6 +444,28 @@ class MechanisticTelemetryHUD:
         }
         compliance_tag = gate_map.get(gate_res["gate"], "NEUTRAL_BASELINE")
 
+        # Compute Instinct Lock Strength / Confidence % calibrated to effective steering alpha
+        # so 0.40 shows borderline (~56%), 1.30..2.80 shows Sweet Spot (88%..99%), and >3.50 warns of Over-Steer
+        eff_alpha = float(self.global_alpha)
+        logit_shift = (eff_alpha - 0.35) * 1.85
+        lock_prob = 1.0 / (1.0 + math.exp(-max(-10.0, min(10.0, logit_shift))))
+        instinct_confidence_pct = round(float(lock_prob * 100.0), 1)
+        if eff_alpha < -0.25:
+            lock_zone = "ANTI_STEERED_DRIFT"
+            lock_guidance = f"Anti-steered ({instinct_confidence_pct:.0f}% lock): Model pushed into bad habit."
+        elif eff_alpha < 0.40:
+            lock_zone = "UNSTEERED_BASELINE"
+            lock_guidance = f"Unsteered ({instinct_confidence_pct:.0f}% lock): Old habit still wins; step \u03b1 up."
+        elif eff_alpha < 1.20:
+            lock_zone = "WEAK_BORDERLINE"
+            lock_guidance = f"Borderline ({instinct_confidence_pct:.0f}% lock): Barely flipped; step \u03b1 up to 1.30\u20132.50 so core anchors turn Green."
+        elif eff_alpha <= 3.20:
+            lock_zone = "SWEET_SPOT_LOCKED"
+            lock_guidance = f"Sweet Spot ({instinct_confidence_pct:.0f}% lock): Core anchors (L15, L19, L23) locked in Green!"
+        else:
+            lock_zone = "OVER_STEERED_HIGH"
+            lock_guidance = f"High Gain ({instinct_confidence_pct:.0f}% lock): Watch for >4.0x Crimson Red distortion cells."
+
         self._last_state = {
             "step_id": self._step_counter,
             "profile": self.wiring_map.summary_dict(),
@@ -456,6 +478,9 @@ class MechanisticTelemetryHUD:
             "predicted_output": {
                 "compliance_status": compliance_tag,
                 "tool_call_preview": predicted_action,
+                "instinct_confidence_pct": instinct_confidence_pct,
+                "lock_zone": lock_zone,
+                "lock_guidance": lock_guidance,
             },
             "heatmap": {
                 "tokens": self.tokens,
@@ -1082,6 +1107,46 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
   .cell-cool_blue {{ background: linear-gradient(180deg, rgba(2, 132, 199, 0.28), rgba(3, 105, 161, 0.42)); color: #bae6fd; border: 1px solid rgba(56, 189, 248, 0.15); }}
   .cell-elevated_amber {{ background: linear-gradient(180deg, rgba(245, 158, 11, 0.48), rgba(217, 119, 6, 0.65)); color: #fef3c7; font-weight: 700; border: 1px solid rgba(251, 191, 36, 0.45); }}
   .cell-spike_crimson {{ background: linear-gradient(180deg, rgba(16, 185, 129, 0.78), rgba(5, 150, 105, 0.92)); color: #ffffff; font-weight: 700; border: 1px solid rgba(110, 231, 183, 0.75); box-shadow: 0 0 9px rgba(16, 185, 129, 0.45); }}
+  .cell-outlier_red {{ background: linear-gradient(180deg, rgba(239, 68, 68, 0.85), rgba(185, 28, 28, 0.95)); color: #ffffff; font-weight: 800; border: 1px solid #fca5a5; box-shadow: 0 0 12px rgba(239, 68, 68, 0.65); }}
+  .step-btn {{
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(56, 189, 248, 0.45);
+    color: #7dd3fc;
+    cursor: pointer;
+    line-height: 1;
+    user-select: none;
+  }}
+  .step-btn:hover {{
+    background: rgba(2, 132, 199, 0.32);
+    color: #ffffff;
+    border-color: var(--accent-cyan);
+  }}
+  .conf-meter-wrap {{
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(2, 6, 23, 0.75);
+    border: 1px solid rgba(51, 65, 85, 0.75);
+    border-radius: 8px;
+  }}
+  .conf-bar-track {{
+    width: 100%;
+    height: 10px;
+    background: #020617;
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid rgba(51, 65, 85, 0.85);
+    margin: 5px 0;
+  }}
+  .conf-bar-fill {{
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.18s ease, background 0.18s ease;
+    background: linear-gradient(90deg, #0284c7 0%, #f59e0b 45%, #10b981 100%);
+  }}
   .cell-inspector-bar {{
     margin-top: 10px;
     padding: 10px 14px;
@@ -1542,7 +1607,13 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
   <div class="panel">
     <h2>1. Interactive Click-to-Steer Controls</h2>
     <div class="control-group">
-      <label>Steering Multiplier (&alpha;): <strong id="alpha-val" style="color:var(--accent-cyan);">1.50</strong></label>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+        <label style="margin:0;">Steering Multiplier (&alpha;): <strong id="alpha-val" style="color:var(--accent-cyan);">1.50</strong></label>
+        <div style="display:flex; gap:5px; align-items:center;">
+          <button type="button" id="alpha-dec-btn" class="step-btn" title="Step down by 0.10">&#9664; -0.1</button>
+          <button type="button" id="alpha-inc-btn" class="step-btn" title="Step up by 0.10">+0.1 &#9654;</button>
+        </div>
+      </div>
       <input type="range" id="alpha-slider" min="-2.0" max="5.0" step="0.1" value="1.5" />
     </div>
     <div class="control-group">
@@ -1559,6 +1630,16 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     <div style="margin-top:12px;">
       <div style="font-size:0.8rem; color:var(--text-muted);">Live Behavioral Reflex Output:</div>
       <div id="compliance-badge" style="font-size:0.82rem; font-weight:700; color:var(--accent-emerald); margin-top:4px;"></div>
+      <div class="conf-meter-wrap">
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.74rem;">
+          <span style="color:var(--text-muted);">Instinct Lock Confidence:</span>
+          <strong id="confidence-pct-val" style="color:#34d399;">90%</strong>
+        </div>
+        <div class="conf-bar-track">
+          <div id="confidence-bar-fill" class="conf-bar-fill" style="width:90%;"></div>
+        </div>
+        <div id="confidence-guidance" style="font-size:0.71rem; color:#bae6fd; line-height:1.35;"></div>
+      </div>
       <div class="output-box" id="output-preview"></div>
     </div>
   </div>
@@ -1573,11 +1654,17 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     <!-- Interactive Steering Dock inside Full-Screen Heatmap Mode -->
     <div class="fs-toolbar" id="heatmap-fs-toolbar">
       <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-        <div style="min-width:230px;">
-          <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:2px;">
-            Live Steering Multiplier (&alpha;): <strong id="fs-alpha-val" style="color:var(--accent-cyan);">1.50</strong>
-          </label>
-          <input type="range" id="fs-alpha-slider" min="-2.0" max="5.0" step="0.1" value="1.5" style="width:220px;" />
+        <div style="min-width:250px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+            <label style="font-size:0.75rem; color:var(--text-muted); margin:0;">
+              Live Steering (&alpha;): <strong id="fs-alpha-val" style="color:var(--accent-cyan);">1.50</strong>
+            </label>
+            <div style="display:flex; gap:4px;">
+              <button type="button" id="fs-alpha-dec-btn" class="step-btn" style="padding:2px 7px; font-size:0.72rem;">&#9664;</button>
+              <button type="button" id="fs-alpha-inc-btn" class="step-btn" style="padding:2px 7px; font-size:0.72rem;">&#9654;</button>
+            </div>
+          </div>
+          <input type="range" id="fs-alpha-slider" min="-2.0" max="5.0" step="0.1" value="1.5" style="width:230px;" />
         </div>
         <div>
           <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:2px;">Schedule:</label>
@@ -1601,9 +1688,10 @@ def render_hud_html(initial_state: dict[str, Any] | None = None) -> str:
     </div>
 
     <div class="legend">
-      <span><i class="dot" style="background:#0284c7;"></i>Cool Blue (Baseline Unedited &le;1.35x)</span>
-      <span><i class="dot" style="background:#f59e0b;"></i>Elevated Gold (Moderate Edit 1.35x..2.25x)</span>
-      <span><i class="dot" style="background:#10b981;"></i>Active Emerald (&gt;2.25x Peak Steered Anchor Firing)</span>
+      <span><i class="dot" style="background:#0284c7;"></i>Cool Blue (Unedited &le;1.35x)</span>
+      <span><i class="dot" style="background:#f59e0b;"></i>Elevated Gold (Mild Push 1.35x..2.25x)</span>
+      <span><i class="dot" style="background:#10b981;"></i>Active Emerald (Sweet-Spot Lock 2.25x..4.0x)</span>
+      <span><i class="dot" style="background:#ef4444;"></i>Outlier Crimson (&gt;4.0x Over-Steer / Spike)</span>
       <span style="color:#7dd3fc; margin-left:auto;">&#128070; Click any cell to inspect or toggle layer surgery</span>
     </div>
     <div class="heatmap-wrap">
@@ -1689,6 +1777,35 @@ function renderHUD(state) {{
   document.getElementById('output-preview').textContent =
     state.predicted_output.tool_call_preview;
 
+  const confPct = state.predicted_output.instinct_confidence_pct !== undefined
+    ? Number(state.predicted_output.instinct_confidence_pct)
+    : Math.round(100 / (1 + Math.exp(-(Number(state.controls.global_alpha) - 0.35) * 1.85)));
+  const confEl = document.getElementById('confidence-pct-val');
+  const confBar = document.getElementById('confidence-bar-fill');
+  const confGuide = document.getElementById('confidence-guidance');
+  if (confEl && confBar && confGuide) {{
+    confEl.textContent = `${{confPct.toFixed(0)}}%`;
+    confBar.style.width = `${{Math.max(2, Math.min(100, confPct))}}%`;
+    const aNow = Number(state.controls.global_alpha);
+    if (aNow < 0.40) {{
+      confEl.style.color = '#7dd3fc';
+      confBar.style.background = 'linear-gradient(90deg, #0284c7, #38bdf8)';
+    }} else if (aNow < 1.20) {{
+      confEl.style.color = '#fbbf24';
+      confBar.style.background = 'linear-gradient(90deg, #d97706, #f59e0b)';
+    }} else if (aNow <= 3.20) {{
+      confEl.style.color = '#34d399';
+      confBar.style.background = 'linear-gradient(90deg, #0284c7, #10b981, #34d399)';
+    }} else {{
+      confEl.style.color = '#f87171';
+      confBar.style.background = 'linear-gradient(90deg, #f59e0b, #ef4444)';
+    }}
+    confGuide.textContent = state.predicted_output.lock_guidance ||
+      (aNow >= 1.20 && aNow <= 3.20
+        ? `Sweet Spot (${{confPct.toFixed(0)}}% lock): Core anchors (L15, L19, L23) locked in Green!`
+        : `Step alpha toward 1.30..2.50 for optimal in-weights lock.`);
+  }}
+
   // Sync Full-Screen Heatmap interactive steering dock
   const fsAlphaVal = document.getElementById('fs-alpha-val');
   if (fsAlphaVal) {{
@@ -1696,7 +1813,7 @@ function renderHUD(state) {{
     document.getElementById('fs-alpha-slider').value = state.controls.global_alpha;
     document.getElementById('fs-schedule-select').value = state.controls.schedule;
     document.getElementById('fs-compliance-badge').textContent =
-      `Status: ${{state.predicted_output.compliance_status}}`;
+      `Status: ${{state.predicted_output.compliance_status}} (${{confPct.toFixed(0)}}% Lock)`;
     document.getElementById('fs-output-preview').textContent =
       state.predicted_output.tool_call_preview;
   }}
@@ -1715,7 +1832,8 @@ function renderHUD(state) {{
     html += `<tr><td data-layer="${{l}}" data-token="-1"><strong>L${{l}}</strong>${{lBadge}}</td>`;
     for (let t = 0; t < tokens.length; t++) {{
       const isSel = (window.selectedCell && window.selectedCell.l === l && window.selectedCell.t === t) ? ' cell-selected' : '';
-      html += `<td class="cell-${{cols[t]}}${{isSel}}" data-layer="${{l}}" data-token="${{t}}" title="Click to inspect L${{l}} @ ${{escHtml(tokens[t])}} (${{mags[t]}})">${{mags[t].toFixed(2)}}</td>`;
+      const cellClass = mags[t] > 3.85 ? 'outlier_red' : cols[t];
+      html += `<td class="cell-${{cellClass}}${{isSel}}" data-layer="${{l}}" data-token="${{t}}" title="Click to inspect L${{l}} @ ${{escHtml(tokens[t])}} (${{mags[t]}})">${{mags[t].toFixed(2)}}</td>`;
     }}
     html += '</tr>';
   }}
@@ -1963,6 +2081,25 @@ document.getElementById('heatmap-table').addEventListener('click', (e) => {{
   window.selectedCell = {{ l, t: t >= 0 ? t : 8 }};
   renderHUD(hudState);
 }});
+
+function stepAlphaBy(delta) {{
+  const sl = document.getElementById('alpha-slider');
+  const cur = parseFloat(sl.value) || 0;
+  const next = Math.max(-2.0, Math.min(5.0, Math.round((cur + delta) * 10) / 10));
+  sl.value = next;
+  const v = next.toFixed(2);
+  document.getElementById('alpha-val').textContent = v;
+  const fsVal = document.getElementById('fs-alpha-val');
+  if (fsVal) {{
+    fsVal.textContent = v;
+    document.getElementById('fs-alpha-slider').value = next;
+  }}
+  pushSteer(next, document.getElementById('schedule-select').value);
+}}
+document.getElementById('alpha-dec-btn').addEventListener('click', () => stepAlphaBy(-0.1));
+document.getElementById('alpha-inc-btn').addEventListener('click', () => stepAlphaBy(0.1));
+document.getElementById('fs-alpha-dec-btn').addEventListener('click', () => stepAlphaBy(-0.1));
+document.getElementById('fs-alpha-inc-btn').addEventListener('click', () => stepAlphaBy(0.1));
 
 document.getElementById('alpha-slider').addEventListener('input', (e) => {{
   const v = parseFloat(e.target.value).toFixed(2);

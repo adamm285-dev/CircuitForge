@@ -102,12 +102,16 @@ def test_hud_http_server_and_html_snapshot_export(tmp_path: Path) -> None:
             assert "heatmap-fs-btn" in body_html
             assert "heatmap-fs-toolbar" in body_html
             assert "fs-alpha-slider" in body_html
+            assert "alpha-dec-btn" in body_html
+            assert "alpha-inc-btn" in body_html
+            assert "confidence-pct-val" in body_html
 
         # 2. GET /api/telemetry
         with urllib.request.urlopen(f"{base_url}/api/telemetry") as resp:
             assert resp.status == 200
             telem = json.loads(resp.read().decode("utf-8"))
             assert telem["profile"]["model_name"] == "Qwen3.6-35B-A3B"
+            assert "instinct_confidence_pct" in telem["predicted_output"]
 
         # 3. POST /api/steer (Interactive Click-to-Steer)
         req_data = json.dumps({"alpha": -1.2, "schedule": "uniform"}).encode("utf-8")
